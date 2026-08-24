@@ -5,7 +5,7 @@
  * 每次成功写入都会触发一次针对性的 loader reload，让改动无需重启即可在
  * 存活 session 中生效（项目写入只重挂该项目根的 session；全局写入重挂全部）。
  *
- * @module @dsh-ext/capability-panel/mcp/manager
+ * @module @chengdb/capability-panel/mcp/manager
  */
 
 import { findProjectRoot } from "../shared/project-root.js";

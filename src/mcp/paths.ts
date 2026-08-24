@@ -7,7 +7,7 @@
  * 项目根的探测复用 shared/project-root.ts 的 findProjectRoot，与 skills 域
  * 保持同一套"项目根"判定口径。
  *
- * @module @dsh-ext/capability-panel/mcp/paths
+ * @module @chengdb/capability-panel/mcp/paths
  */
 
 import { join } from "node:path";

@@ -5,7 +5,7 @@
  * `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`），确保这里创建的 skill 宿主 registry
  * 一定接受。
  *
- * @module @dsh-ext/capability-panel/skills/validate
+ * @module @chengdb/capability-panel/skills/validate
  */
 
 /** 合法的 kebab-case skill 名称正则（与 registry 相同）。 */

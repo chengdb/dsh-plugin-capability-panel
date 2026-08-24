@@ -9,7 +9,7 @@
  *
  * 写入一律经由 `crud.ts`，落在由 `roots.ts` 从工作区解析出来的具体根目录上。
  *
- * @module @dsh-ext/capability-panel/skills/manager
+ * @module @chengdb/capability-panel/skills/manager
  */
 
 import { findProjectRoot } from "../shared/project-root.js";

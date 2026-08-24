@@ -5,7 +5,7 @@
  * "project" / "global" 各自收窄列表。两域共用这一份 Tab 模型，保证
  * 切换 Tab 的 UI 与文案完全一致。
  *
- * @module @dsh-ext/capability-panel/client/scope-tabs
+ * @module @chengdb/capability-panel/client/scope-tabs
  */
 
 /** 作用域 Tab 的取值。 */

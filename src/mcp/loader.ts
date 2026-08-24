@@ -19,7 +19,7 @@
  *   - 面板的写操作调用 {@link McpLoader.reload}，dispose 掉受影响 session
  *     的旧挂载并重新挂载。
  *
- * @module @dsh-ext/capability-panel/mcp/loader
+ * @module @chengdb/capability-panel/mcp/loader
  */
 
 import * as McpClient from "@deepseek-ai/dsh-mcp-client";

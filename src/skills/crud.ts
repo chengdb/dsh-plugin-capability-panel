@@ -3,7 +3,7 @@
  * 根目录（由 `roots.ts` 解析）并返回纯结果对象，因此同一套函数既可以支撑
  * CLI、宿主 RPC 方法，也可以支撑未来的其它入口。
  *
- * @module @dsh-ext/capability-panel/skills/crud
+ * @module @chengdb/capability-panel/skills/crud
  */
 
 import { readdir, stat } from "node:fs/promises";

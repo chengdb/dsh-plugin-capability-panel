@@ -17,7 +17,7 @@
  *   - `"timeoutMs"` —— 映射到桥接层的单次工具调用超时；
  *   - `"cwd"` —— 覆盖子进程工作目录（仅 stdio）。
  *
- * @module @dsh-ext/capability-panel/mcp/types
+ * @module @chengdb/capability-panel/mcp/types
  */
 
 /** 一条 MCP server 条目所在的作用域。 */

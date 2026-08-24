@@ -7,7 +7,7 @@
  * （字符串外）即可。样式依赖的主题变量均为 `var(--dsw-alias-*, 回退值)`
  * 形态，外壳未定义时用回退值兜底。
  *
- * @module @dsh-ext/capability-panel/client/styles
+ * @module @chengdb/capability-panel/client/styles
  */
 
 export const SKP_CSS = `
@@ -98,7 +98,7 @@ export function installStyles(): () => void {
   const id = "dsh-capability-panel-css";
   if (typeof document !== "undefined" && document.querySelector(`style[data-plugin-css="${id}"]`) === null) {
     const tag = document.createElement("style");
-    tag.dataset.plugin = "@dsh-ext/capability-panel";
+    tag.dataset.plugin = "@chengdb/capability-panel";
     tag.dataset.pluginCss = id;
     tag.textContent = SKP_CSS;
     document.head.appendChild(tag);

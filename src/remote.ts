@@ -13,7 +13,7 @@
  * 所有返回值统一包一层 {@link RpcResult} 信封，错误信息收敛进 `errors` 数组，
  * 客户端据此展示而不抛原始异常。
  *
- * @module @dsh-ext/capability-panel/remote
+ * @module @chengdb/capability-panel/remote
  */
 
 import { CHANNEL } from "./channel.js";

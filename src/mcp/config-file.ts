@@ -6,7 +6,7 @@
  * 宽容（视为空配置），但对"JSON 格式非法"抛出带文件名的错误，
  * 让面板能明确展示问题。
  *
- * @module @dsh-ext/capability-panel/mcp/config-file
+ * @module @chengdb/capability-panel/mcp/config-file
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";

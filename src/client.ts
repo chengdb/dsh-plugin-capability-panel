@@ -10,7 +10,7 @@
  * 点击后在其上方弹出锚定浮层面板。纯增量——不遮蔽任何内置 UI，也不绑定
  * 任何 session。
  *
- * @module @dsh-ext/capability-panel/client
+ * @module @chengdb/capability-panel/client
  */
 
 import { createPanelApi } from "./client/api-adapter.js";

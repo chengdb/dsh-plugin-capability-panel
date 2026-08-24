@@ -9,7 +9,7 @@
  * 保持独立：这是传输边界，宿主侧的类型（如 McpStatusView）是 Cordis
  * 运行时的概念，不能直接依赖。
  *
- * @module @dsh-ext/capability-panel/client/api
+ * @module @chengdb/capability-panel/client/api
  */
 
 import type { SkillFormat, SkillSpec, WritableScope } from "../skills/types.js";

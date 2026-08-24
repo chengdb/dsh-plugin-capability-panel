@@ -9,7 +9,7 @@
  * 布局刻意保持朴素（自带 CSS 类，见 styles.ts），对未经确认的 UI 原语
  * 组件零硬依赖。
  *
- * @module @dsh-ext/capability-panel/client/panel
+ * @module @chengdb/capability-panel/client/panel
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";

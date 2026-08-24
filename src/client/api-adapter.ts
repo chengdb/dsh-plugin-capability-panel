@@ -6,7 +6,7 @@
  * 这里负责：包上信封 → 调用通道 → 解信封（失败抛错）→ 把宿主返回的
  * 普通对象投影成客户端类型（见 toSummary）。
  *
- * @module @dsh-ext/capability-panel/client/api-adapter
+ * @module @chengdb/capability-panel/client/api-adapter
  */
 
 import { CHANNEL } from "../channel.js";

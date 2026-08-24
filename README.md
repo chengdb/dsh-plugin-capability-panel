@@ -1,9 +1,8 @@
-# @dsh-ext/capability-panel
+# @chengdb/capability-panel
 
 dsh 插件：在 Web GUI 右侧面板中浏览并管理**项目级**与**全局级**能力——
 当前支持 **Skills** 与 **MCP servers** 两个域，结构上可继续扩展（如快捷语）。
 
-> 前身是 `@dsh-ext/skills-panel`（0.1.x，仅 skills）。0.2.0 起更名并新增 MCP 管理。
 
 ## 两个域
 
@@ -71,9 +70,6 @@ pnpm build     # tsc（lib/*.js + .d.ts）→ tsdown（lib/client.js 包裹版�
 dsh plugin --profile web add "link:<本仓库路径>"
 dsh web
 ```
-
-> 从旧 `@dsh-ext/skills-panel` 迁移：先 `dsh plugin --profile web remove @dsh-ext/skills-panel`，
-> 再按上面第 4 步装新名（RPC 通道已从 `/skills-manager` 换成 `/capability-panel`，必须整体重装）。
 
 ## 设计要点
 

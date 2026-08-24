@@ -7,7 +7,7 @@
  * 支持 新增 / 编辑 / 删除 / 启用禁用。写入直接落配置文件，宿主在每次
  * 写操作后重挂受影响 session 的连接。
  *
- * @module @dsh-ext/capability-panel/client/mcp-panel
+ * @module @chengdb/capability-panel/client/mcp-panel
  */
 
 import { useEffect, useMemo, useState } from "react";

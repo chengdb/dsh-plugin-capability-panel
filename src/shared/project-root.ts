@@ -6,7 +6,7 @@
  * （mcp/manager.ts）都需要先找到工作区所属的"项目根"，因此把这段向上查找
  * 的逻辑收拢到这里，而不是在某个域内重复实现。
  *
- * @module @dsh-ext/capability-panel/shared/project-root
+ * @module @chengdb/capability-panel/shared/project-root
  */
 
 import { existsSync } from "node:fs";

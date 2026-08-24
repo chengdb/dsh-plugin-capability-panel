@@ -10,6 +10,6 @@
  * 两端源码各自 import 这个常量，而不是各自硬编码字符串，避免通道名拼写漂移：
  * 改名只需要动这一处。
  *
- * @module @dsh-ext/capability-panel/channel
+ * @module @chengdb/capability-panel/channel
  */
 export const CHANNEL = "/capability-panel";
