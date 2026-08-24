@@ -1,0 +1,10 @@
+# 构建产物与依赖
+node_modules
+lib
+.pnpm-store
+
+# 本地记录/笔记（安装手册、计划、调研、临时脚本，不进版本控制）
+notes/
+
+# 本地 MCP 配置（含本机路径）
+.mcp.json

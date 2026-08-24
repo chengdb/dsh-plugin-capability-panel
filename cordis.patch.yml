@@ -1,0 +1,11 @@
+# Capability Panel host plugin bundle patch.
+#
+# Mounts the capability-panel host plugin by package name. Cordis loads the
+# package and uses its default export ({ name, inject, apply }). This file is
+# referenced by package.json `dsh.bundle.patch`; installing the package as a
+# profile layer (via `dsh plugin --profile web add …`) appends it to
+# dsh.profile.bundles.
+
+- insert:
+    - id: capability-panel
+      name: '@dsh-ext/capability-panel'
