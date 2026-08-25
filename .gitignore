@@ -8,3 +8,5 @@ notes/
 
 # 本地 MCP 配置（含本机路径）
 .mcp.json
+.agents
+.dsh
