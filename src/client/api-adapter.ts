@@ -17,6 +17,7 @@ import type {
   ClientSkillDetail,
   ClientSkillSummary,
   CreateSkillInput,
+  InstallResult,
   McpUpsertInput,
   WorkspaceOption,
 } from "./api.js";
@@ -51,6 +52,18 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
     return { ok: false, errors: [`unexpected response from ${CHANNEL}`] };
   }
 
+  /**
+   * 解开双层信封：宿主编排层把业务结果（CreateResult / TransferResult 等
+   * 自带 ok/errors 的形状）包进 RPC 信封 `{ ok: true, value }`，所以信封
+   * ok 不代表业务成功。value 自身带 ok 字段时以业务层为准。
+   */
+  function unwrap(result: RawResult): RawResult {
+    if (result.ok && result.value !== null && typeof result.value === "object" && "ok" in (result.value as Record<string, unknown>)) {
+      return result.value as RawResult;
+    }
+    return result;
+  }
+
   return {
     skills: {
       /** 列表：把宿主返回的普通对象逐条投影成 ClientSkillSummary。 */
@@ -74,17 +87,57 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
 
       async create(input: CreateSkillInput) {
         const cwd = deps.currentWorkspaceCwd();
-        return rpc("skills.create", { ...input, cwd });
+        return unwrap(await rpc("skills.create", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
       },
 
       async update(input) {
         const cwd = deps.currentWorkspaceCwd();
-        return rpc("skills.update", { ...input, cwd });
+        return unwrap(await rpc("skills.update", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
       },
 
       async remove(input) {
         const cwd = deps.currentWorkspaceCwd();
-        return rpc("skills.remove", { ...input, cwd });
+        return unwrap(await rpc("skills.remove", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
+      },
+
+      /** 上传安装：解开信封后投影成 InstallResult。 */
+      async installUpload(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return toInstallResult(unwrap(await rpc("skills.install", { ...input, cwd })));
+      },
+
+      /** 宿主路径安装。 */
+      async installFromPath(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return toInstallResult(unwrap(await rpc("skills.install", { ...input, cwd })));
+      },
+
+      /** URL 下载安装（GitHub 仓库 / .zip / raw .md）。 */
+      async installFromUrl(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return toInstallResult(unwrap(await rpc("skills.install", { ...input, cwd })));
+      },
+
+      /** 导出为文件清单：解开信封后按宿主返回的形状投影。 */
+      async exportFiles(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        const result = unwrap(await rpc("skills.export", { ...input, cwd }));
+        if (!result.ok) return { ok: false, errors: result.errors };
+        // 解开信封后 result 即业务层 TransferResult：files/name/format 直接挂其上。
+        const self = result as unknown as Record<string, unknown>;
+        if (!Array.isArray(self.files)) return { ok: false, errors: ["export returned no files"] };
+        return {
+          ok: true,
+          name: typeof self.name === "string" ? self.name : input.name,
+          format: self.format === "directory" ? "directory" : "flat",
+          files: self.files as { path: string; content: string }[],
+        };
+      },
+
+      /** 导出到宿主目录。 */
+      async exportToPath(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("skills.export", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
       },
     },
 
@@ -122,7 +175,7 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
 
     // 工作区相关方法直接透传注入的 deps（状态由 client.ts 持有）。
     workspaceLabel() {
-      return deps.currentWorkspaceCwd() ?? "(no workspace)";
+      return deps.currentWorkspaceCwd() ?? "（无工作区）";
     },
 
     selectedProject() {
@@ -160,5 +213,17 @@ function toSummary(value: Record<string, unknown>): ClientSkillSummary {
     format: (value.format === "directory" ? "directory" : "flat"),
     readOnly: value.readOnly === true,
     ...(typeof value.path === "string" ? { path: value.path } : {}),
+    ...(typeof value.root === "string" ? { root: value.root } : {}),
+  };
+}
+
+/** 把解开信封后的安装结果投影成 InstallResult（防御宿主侧数据漂移）。 */
+function toInstallResult(result: RawResult): InstallResult {
+  if (!result.ok) return { ok: false, errors: result.errors };
+  const self = result as unknown as Record<string, unknown>;
+  return {
+    ok: true,
+    ...(typeof self.name === "string" ? { name: self.name } : {}),
+    ...(self.existed === true ? { existed: true } : {}),
   };
 }

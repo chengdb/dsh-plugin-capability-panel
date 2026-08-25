@@ -30,6 +30,8 @@ export interface ClientSkillSummary {
   format: SkillFormat;
   readOnly: boolean;
   path?: string;
+  /** 可写条目所属的受管根目录（写回/导出按 root 精确寻址）。 */
+  root?: string;
 }
 
 /** skill 详情 = 摘要 + 完整 spec + 正文 + 资源文件列表。 */
@@ -52,6 +54,52 @@ export interface CreateSkillInput {
 /** 操作结果：成功或错误信息列表（与宿主侧枚举保持同构）。 */
 export type OpResult = { ok: true } | { ok: false; errors: string[] };
 
+/** 安装结果：成功时带回实际落盘的 skill 名（以 frontmatter 名称为准）。 */
+export type InstallResult = { ok: true; name?: string; existed?: boolean } | { ok: false; errors: string[] };
+
+/** 上传/下载通道里的一个文件：相对路径 + base64 内容（二进制安全）。 */
+export interface SkillFilePayload {
+  path: string;
+  content: string;
+}
+
+/** 浏览器上传安装的入参（单 .md 文件或含 SKILL.md 的一组目录文件）。 */
+export interface InstallUploadInput {
+  scope: WritableScope;
+  target?: ".dsh" | ".agents";
+  files: SkillFilePayload[];
+  overwrite?: boolean;
+}
+
+/** 宿主路径安装的入参。 */
+export interface InstallPathInput {
+  scope: WritableScope;
+  target?: ".dsh" | ".agents";
+  sourcePath: string;
+  overwrite?: boolean;
+}
+
+/** URL 下载安装的入参（GitHub 仓库 / .zip / raw .md）。 */
+export interface InstallUrlInput {
+  scope: WritableScope;
+  target?: ".dsh" | ".agents";
+  url: string;
+  overwrite?: boolean;
+}
+
+/** 导出为文件清单的结果（客户端据此单文件下载或打 zip）。 */
+export type ExportFilesResult =
+  | { ok: true; name: string; format: SkillFormat; files: SkillFilePayload[] }
+  | { ok: false; errors: string[] };
+
+/** 按行寻址一个可写 skill 的最小入参（root 优先，scope/target 兜底）。 */
+export interface SkillRef {
+  name: string;
+  root?: string;
+  scope?: WritableScope;
+  target?: ".dsh" | ".agents";
+}
+
 /** skills 域的面板 API。 */
 export interface SkillsApi {
   /** 列出（合并）当前作用域下所有 skill 摘要。 */
@@ -60,7 +108,17 @@ export interface SkillsApi {
   read(name: string): Promise<ClientSkillDetail | undefined>;
   create(input: CreateSkillInput): Promise<OpResult>;
   update(input: { scope: WritableScope; target?: ".dsh" | ".agents"; name: string; spec: SkillSpec; body: string }): Promise<OpResult>;
-  remove(input: { scope: WritableScope; target?: ".dsh" | ".agents"; name: string }): Promise<OpResult>;
+  remove(input: SkillRef): Promise<OpResult>;
+  /** 浏览器上传安装（单 .md / 含 SKILL.md 的目录文件清单 / zip 解压清单）。 */
+  installUpload(input: InstallUploadInput): Promise<InstallResult>;
+  /** 从宿主磁盘路径安装（skill 目录或 .md 文件）。 */
+  installFromPath(input: InstallPathInput): Promise<InstallResult>;
+  /** 从 URL 下载安装（GitHub 仓库、.zip URL 或 raw .md URL）。 */
+  installFromUrl(input: InstallUrlInput): Promise<InstallResult>;
+  /** 导出为 base64 文件清单（供浏览器下载/打包）。 */
+  exportFiles(input: SkillRef): Promise<ExportFilesResult>;
+  /** 导出到宿主上的指定目录。 */
+  exportToPath(input: SkillRef & { destDir: string; overwrite?: boolean }): Promise<OpResult>;
 }
 
 // ---------------------------------------------------------------------------

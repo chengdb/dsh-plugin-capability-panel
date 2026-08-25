@@ -33,6 +33,8 @@ export interface PanelRpcService {
     create(input: unknown): Promise<unknown>;
     update(input: unknown): Promise<unknown>;
     remove(input: unknown): Promise<unknown>;
+    install(input: unknown): Promise<unknown>;
+    export(input: unknown): Promise<unknown>;
   };
   mcp: {
     list(cwd?: string): Promise<unknown>;
@@ -64,6 +66,10 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.skills.update(p) };
       case "skills.remove":
         return { ok: true, value: await service.skills.remove(p) };
+      case "skills.install":
+        return { ok: true, value: await service.skills.install(p) };
+      case "skills.export":
+        return { ok: true, value: await service.skills.export(p) };
       case "mcp.list":
         return { ok: true, value: await service.mcp.list(cwd) };
       case "mcp.upsert":

@@ -16,6 +16,9 @@ import { findProjectRoot } from "../shared/project-root.js";
 import { globalSkillsDir, projectSkillsDir, userAgentsSkillsDir } from "./roots.js";
 import { readSkill, resourceDirectory, skillFilePath } from "./disk.js";
 import { createSkill, updateSkill, removeSkill, readSkillDetail, listSkillEntries } from "./crud.js";
+import { installFromUrl } from "./download.js";
+import { exportSkillFiles, exportToPath, installFromFiles, installFromPath } from "./transfer.js";
+import type { TransferFile } from "./transfer.js";
 import { invocationPolicy } from "./types.js";
 import type { SkillFormat, SkillSummaryView, WritableScope } from "./types.js";
 
@@ -97,6 +100,7 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
             false,
             skillFilePath(root.path, name, format),
             format === "directory" ? resourceDirectory(root.path, name) : undefined,
+            root.path,
           );
         }),
       );
@@ -139,6 +143,35 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
       const root = input.root ?? resolveRoot(input.scope ?? "global", input.cwd, input.target);
       return readSkillDetail(root, input.name);
     },
+    /**
+     * 安装 skill：`sourcePath` 走宿主路径复制，`url` 走 HTTP 下载（GitHub
+     * 仓库 / .zip / raw .md），`files` 走客户端上传落盘；三者都缺时报错。
+     * scope 缺省按 global 解析根。
+     */
+    async install(input: { root?: string; scope?: WritableScope; target?: ".dsh" | ".agents"; cwd?: string; sourcePath?: string; url?: string; files?: TransferFile[]; overwrite?: boolean }) {
+      const root = input.root ?? resolveRoot(input.scope ?? "global", input.cwd, input.target);
+      if (typeof input.sourcePath === "string" && input.sourcePath.length > 0) {
+        return installFromPath({ root, sourcePath: input.sourcePath, overwrite: input.overwrite });
+      }
+      if (typeof input.url === "string" && input.url.length > 0) {
+        return installFromUrl({ root, url: input.url, overwrite: input.overwrite });
+      }
+      if (Array.isArray(input.files)) {
+        return installFromFiles({ root, files: input.files, overwrite: input.overwrite });
+      }
+      return { ok: false, errors: ["install requires a sourcePath, a url, or a files list"] };
+    },
+    /**
+     * 导出 skill：给 `destDir` 复制到宿主目录；否则读成 base64 文件清单
+     * 返回给客户端下载。scope 缺省按 global 解析根。
+     */
+    async export(input: { root?: string; scope?: WritableScope; target?: ".dsh" | ".agents"; cwd?: string; name: string; destDir?: string; overwrite?: boolean }) {
+      const root = input.root ?? resolveRoot(input.scope ?? "global", input.cwd, input.target);
+      if (typeof input.destDir === "string" && input.destDir.length > 0) {
+        return exportToPath({ root, name: input.name, destDir: input.destDir, overwrite: input.overwrite });
+      }
+      return exportSkillFiles(root, input.name);
+    },
   };
 }
 
@@ -153,6 +186,7 @@ function summaryView(
   readOnly: boolean,
   filePath: string,
   resDir: string | undefined,
+  root: string,
 ): SkillSummaryView {
   return {
     name,
@@ -164,5 +198,6 @@ function summaryView(
     readOnly,
     path: filePath,
     ...(resDir !== undefined ? { resourceDirectory: resDir } : {}),
+    root,
   };
 }

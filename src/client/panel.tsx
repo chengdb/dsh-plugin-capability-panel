@@ -13,17 +13,21 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CapabilityPanelApi, ClientSkillSummary, SkillsApi } from "./api.js";
+import type { CapabilityPanelApi, ClientSkillSummary, SkillFilePayload, SkillsApi } from "./api.js";
 import { McpView } from "./mcp-panel.js";
+import { SkpSelect } from "./select.js";
 import { SCOPE_LABEL } from "./scope-tabs.js";
 import type { ScopeTab } from "./scope-tabs.js";
+import { locateSkillRoot, rerootEntries, stripCommonTopFolder } from "../shared/skill-locate.js";
+import { unzip } from "./unzip.js";
+import { base64ToBytes, buildZip, downloadBytes } from "./zip.js";
 
 /** 域 Tab 的取值（对应面板头部的两个主 Tab）。 */
 type DomainTab = "skills" | "mcp";
 
-/** 每个域 Tab 的展示文案（当前硬编码，见 client.ts 的 locale 说明）。 */
+/** 每个域 Tab 的展示文案（当前硬编码中文，见 client.ts 的 locale 说明）。 */
 const DOMAIN_LABEL: Record<DomainTab, string> = {
-  skills: "Skills",
+  skills: "技能",
   mcp: "MCP",
 };
 
@@ -61,32 +65,35 @@ export function CapabilityPanel({ api, onClose }: { api: CapabilityPanelApi; onC
   // 标题行 + 关闭按钮是浮层自己的 chrome（footer-action 的 popover
   // 不提供外壳级 header）。
   return (
-    <section className="skp-panel" aria-label="Capability Panel">
+    <section className="skp-panel" aria-label="能力面板">
       <header className="skp-header">
         <div className="skp-title-row">
-          <h2>Capabilities</h2>
+          <div className="skp-title-main">
+            <h2>能力面板</h2>
+            {/* 当前作用域的工作区路径（跟随 session 或钉选的项目）。 */}
+            {workspace !== undefined && (
+              <span className="skp-workspace" title={workspace}>
+                {workspace}
+              </span>
+            )}
+          </div>
           <div className="skp-title-tools">
             {/* 项目作用域下拉框："" = 跟随当前 session；钉选才固定。 */}
-            <select
-              className="skp-select"
+            <SkpSelect
+              className="skp-dd-scope"
               value={pinned ?? ""}
               title={workspace}
-              aria-label="Project scope"
-              onChange={(e) => api.selectProject(e.target.value === "" ? undefined : e.target.value)}
-            >
-              <option value="">Follow current session</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.path}>
-                  {p.title ?? p.path}
-                </option>
-              ))}
-              {/* 钉选的项目不在已知列表里时也保留为选项，避免"消失"。 */}
-              {pinned !== undefined && !projects.some((p) => p.path === pinned) && (
-                <option value={pinned}>{pinned}</option>
-              )}
-            </select>
+              ariaLabel="项目作用域"
+              options={[
+                { value: "", label: "跟随当前会话" },
+                ...projects.map((p) => ({ value: p.path, label: p.title ?? p.path })),
+                // 钉选的项目不在已知列表里时也保留为选项，避免"消失"。
+                ...(pinned !== undefined && !projects.some((p) => p.path === pinned) ? [{ value: pinned, label: pinned }] : []),
+              ]}
+              onChange={(value) => api.selectProject(value === "" ? undefined : value)}
+            />
             {onClose !== undefined && (
-              <button className="skp-close" type="button" aria-label="Close capability panel" title="Close panel" onClick={onClose}>
+              <button className="skp-close" type="button" aria-label="关闭能力面板" title="关闭面板" onClick={onClose}>
                 ✕
               </button>
             )}
@@ -162,14 +169,14 @@ export function CapabilitiesFooterAction({ api, wide }: { api: CapabilityPanelAp
         type="button"
         className="skp-foot-btn"
         aria-expanded={open}
-        title="Capabilities"
+        title="能力面板"
         onClick={() => setOpen((value) => !value)}
       >
         <span aria-hidden="true" className="skp-foot-icon">
           ✦
         </span>
         {/* wide=false 对应侧栏收窄成 56px 竖条，只显示图标。 */}
-        {wide && <span className="skp-foot-label">Capabilities</span>}
+        {wide && <span className="skp-foot-label">能力面板</span>}
       </button>
     </div>
   );
@@ -180,8 +187,8 @@ export function CapabilitiesFooterAction({ api, wide }: { api: CapabilityPanelAp
 // ---------------------------------------------------------------------------
 
 /**
- * Skills 视图：作用域 Tab（All/Project/Global）+ 搜索 + 列表 + 详情。
- * 列表是只读浏览（管理面板当前只读 skills；创建/编辑入口未启用）。
+ * Skills 视图：作用域 Tab（All/Project/Global）+ 搜索 + 安装入口 + 列表 + 详情。
+ * 列表来自宿主受管根目录的磁盘视图；安装/导出/移除后通过 refreshKey 重拉。
  */
 function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) {
   const [tab, setTab] = useState<ScopeTab>("all");
@@ -190,8 +197,10 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | undefined>(undefined);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [installOpen, setInstallOpen] = useState(false);
 
-  // 挂载时与工作区变化时（项目作用域列表依赖该 cwd 解析）重新拉取。
+  // 挂载时、工作区变化时（项目作用域列表依赖该 cwd 解析）、写操作后重新拉取。
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -211,7 +220,9 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
     return () => {
       cancelled = true;
     };
-  }, [api, workspace]);
+  }, [api, workspace, refreshKey]);
+
+  const reload = () => setRefreshKey((key) => key + 1);
 
   // 过滤：作用域（project 由 source 判定） + 搜索词（命中 name 或 description）。
   const visible = useMemo(() => {
@@ -244,13 +255,16 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
         <input
           className="skp-search"
           type="search"
-          placeholder="Search skills…"
+          placeholder="搜索技能…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <button type="button" className="skp-btn skp-btn-primary" onClick={() => setInstallOpen(true)}>
+          + 安装
+        </button>
       </div>
 
-      {loading && <div className="skp-status">Loading…</div>}
+      {loading && <div className="skp-status">加载中…</div>}
       {error && <div className="skp-error">{error}</div>}
       {!loading && !error && (
         <div className="skp-body">
@@ -265,14 +279,14 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                   <span className="skp-row-meta">
                     {/* 来源标签：project 系 vs 其余一律归为 global。 */}
                     <span className={isProjectSource(item.source) ? "skp-tag skp-tag-project" : "skp-tag skp-tag-global"}>
-                      {isProjectSource(item.source) ? "project" : "global"}
+                      {isProjectSource(item.source) ? "项目" : "全局"}
                     </span>
-                    {/* 只读条目显示 read-only 徽标，可写条目显示布局标签。 */}
+                    {/* 只读条目显示只读徽标，可写条目显示布局标签。 */}
                     {item.readOnly ? (
-                      <span className="skp-tag skp-tag-readonly">read-only</span>
+                      <span className="skp-tag skp-tag-readonly">只读</span>
                     ) : (
                       <span className={item.format === "directory" ? "skp-tag skp-tag-directory" : "skp-tag skp-tag-flat"}>
-                        {item.format}
+                        {item.format === "directory" ? "目录" : "单文件"}
                       </span>
                     )}
                   </span>
@@ -280,16 +294,36 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                 </button>
               </li>
             ))}
-            {visible.length === 0 && <li className="skp-empty">No skills match.</li>}
+            {visible.length === 0 && <li className="skp-empty">没有匹配的技能。</li>}
           </ul>
           <div className="skp-detail">
             {selectedItem ? (
-              <SkillDetail summary={selectedItem} />
+              <SkillDetail
+                key={skillRowKey(selectedItem)}
+                summary={selectedItem}
+                api={api}
+                onChanged={() => {
+                  setSelected(undefined);
+                  reload();
+                }}
+              />
             ) : (
-              <div className="skp-detail-empty">Select a skill to view details.</div>
+              <div className="skp-detail-empty">选择一项技能查看详情。</div>
             )}
           </div>
         </div>
+      )}
+
+      {installOpen && (
+        <InstallDialog
+          api={api}
+          hasWorkspace={workspace !== undefined && workspace !== "（无工作区）"}
+          onClose={() => setInstallOpen(false)}
+          onInstalled={() => {
+            setInstallOpen(false);
+            reload();
+          }}
+        />
       )}
     </div>
   );
@@ -311,38 +345,454 @@ function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string 
   return `${item.source}:${item.name}`;
 }
 
-/** 详情卡片：只读展示元信息与路径。 */
-function SkillDetail({ summary }: { summary: ClientSkillSummary }) {
+/**
+ * 详情卡片：元信息 + 路径 + 写操作（导出下载 / 导出到宿主路径 / 移除）。
+ * 只读条目（custom / bundled）只展示徽标，不提供操作。
+ *
+ * 组件以 `key={source:name}` 挂载（见 SkillsView），切换选中行即整体重挂，
+ * 因此确认态/错误态不需要手动随行切换重置。
+ */
+function SkillDetail({ summary, api, onChanged }: { summary: ClientSkillSummary; api: SkillsApi; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [opError, setOpError] = useState<string | undefined>(undefined);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [exportPathOpen, setExportPathOpen] = useState(false);
+
+  /** 导出为浏览器下载：flat ⇒ 单个 .md；directory ⇒ 打 zip（store-only）。 */
+  const doExportDownload = async () => {
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await api.exportFiles(skillRef(summary));
+      if (!result.ok) {
+        setOpError(result.errors.join("; "));
+        return;
+      }
+      if (result.format === "flat" && result.files.length === 1) {
+        downloadBytes(`${result.name}.md`, base64ToBytes(result.files[0].content), "text/markdown");
+      } else {
+        const zip = buildZip(result.files.map((file) => ({ name: `${result.name}/${file.path}`, data: base64ToBytes(file.content) })));
+        downloadBytes(`${result.name}.zip`, zip, "application/zip");
+      }
+    } catch (error) {
+      setOpError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 移除：两击确认（与 MCP 视图的 Delete 同一交互约定）。 */
+  const doRemove = async () => {
+    if (!confirmRemove) {
+      setConfirmRemove(true);
+      return;
+    }
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await api.remove(skillRef(summary));
+      if (!result.ok) {
+        setOpError(result.errors.join("; "));
+        setConfirmRemove(false);
+        return;
+      }
+      onChanged();
+    } catch (error) {
+      setOpError(String(error));
+      setConfirmRemove(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="skp-detail-card">
-      <h3>{summary.name}</h3>
+      {/* 头部：标题 + 操作按钮（置于右上角，避免操作沉底难找）。 */}
+      <div className="skp-detail-head">
+        <h3>{summary.name}</h3>
+        {summary.readOnly ? (
+          <span className="skp-badge">只读</span>
+        ) : (
+          <div className="skp-detail-actions">
+            <button type="button" className="skp-btn" disabled={busy} onClick={doExportDownload}>
+              导出
+            </button>
+            <button type="button" className="skp-btn" disabled={busy} onClick={() => setExportPathOpen(true)}>
+              导出到路径…
+            </button>
+            <button
+              type="button"
+              className={confirmRemove ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"}
+              disabled={busy}
+              onClick={doRemove}
+            >
+              {confirmRemove ? "确认移除？" : "移除"}
+            </button>
+          </div>
+        )}
+      </div>
       <dl className="skp-detail-fields">
-        <dt>description</dt>
+        <dt>描述</dt>
         <dd>{summary.description}</dd>
         {summary.whenToUse !== undefined && (
           <>
-            <dt>whenToUse</dt>
+            <dt>使用时机</dt>
             <dd>{summary.whenToUse}</dd>
           </>
         )}
-        <dt>invocation</dt>
+        <dt>调用方式</dt>
         <dd>
-          model: {summary.modelInvocable ? "✓" : "✗"} · user: {summary.userInvocable ? "✓" : "✗"}
+          模型：{summary.modelInvocable ? "✓" : "✗"} · 用户：{summary.userInvocable ? "✓" : "✗"}
         </dd>
-        <dt>source</dt>
+        <dt>来源</dt>
         <dd>{summary.source}</dd>
         {summary.path !== undefined && (
           <>
-            <dt>path</dt>
+            <dt>路径</dt>
             <dd className="skp-path">{summary.path}</dd>
           </>
         )}
       </dl>
-      {summary.readOnly && (
-        <footer className="skp-detail-actions">
-          <span className="skp-badge">Read-only</span>
-        </footer>
+      {opError !== undefined && <div className="skp-error">{opError}</div>}
+      {exportPathOpen && (
+        <ExportToPathDialog summary={summary} api={api} onClose={() => setExportPathOpen(false)} />
       )}
     </div>
   );
+}
+
+/**
+ * 组装一行的寻址入参：优先用宿主给的受管根（精确，覆盖 user-agents 等
+ * scope 表达不了的根）；root 缺失时按 source 退化到 scope/target。
+ */
+function skillRef(summary: ClientSkillSummary): { name: string; root?: string; scope?: "project" | "global"; target?: ".dsh" | ".agents" } {
+  if (summary.root !== undefined) return { name: summary.name, root: summary.root };
+  if (summary.source === "project-dsh") return { name: summary.name, scope: "project", target: ".dsh" };
+  if (summary.source === "project-agents") return { name: summary.name, scope: "project", target: ".agents" };
+  return { name: summary.name, scope: "global" };
+}
+
+// ---------------------------------------------------------------------------
+// 模态框
+// ---------------------------------------------------------------------------
+
+/** 轻量模态框外壳：点遮罩关闭，点内容不穿透。 */
+function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="skp-modal-overlay" onClick={onClose}>
+      <div className="skp-modal" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <h3>{title}</h3>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** 安装对话框的作用域选项取值（映射到 scope/target 对）。 */
+type InstallScopeChoice = "project-dsh" | "project-agents" | "global";
+
+/** 安装对话框的来源模式与 Tab 文案。 */
+const INSTALL_MODE = { upload: "上传", path: "宿主路径", url: "URL" } as const;
+type InstallMode = keyof typeof INSTALL_MODE;
+
+/**
+ * 安装对话框：三种来源——浏览器上传（单个 .md / 整个 skill 目录 / .zip
+ * 压缩包）、宿主磁盘路径、URL 下载（GitHub 仓库 / .zip / raw .md）。
+ * 目标作用域三选一（无工作区时禁用 project）。
+ */
+function InstallDialog({ api, hasWorkspace, onClose, onInstalled }: { api: SkillsApi; hasWorkspace: boolean; onClose: () => void; onInstalled: () => void }) {
+  const [mode, setMode] = useState<InstallMode>("upload");
+  const [scopeChoice, setScopeChoice] = useState<InstallScopeChoice>(hasWorkspace ? "project-dsh" : "global");
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [sourcePath, setSourcePath] = useState("");
+  const [url, setUrl] = useState("");
+  const [picked, setPicked] = useState<{ label: string; files: SkillFilePayload[] } | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dirInputRef = useRef<HTMLInputElement | null>(null);
+  const zipInputRef = useRef<HTMLInputElement | null>(null);
+
+  /** 选中单个 .md 文件（flat 安装）。 */
+  const onPickFile = async (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    input.value = ""; // 允许重复选同一文件
+    if (file === undefined) return;
+    setErrors([]);
+    try {
+      const content = await fileToBase64(file);
+      setPicked({ label: file.name, files: [{ path: file.name, content }] });
+    } catch (error) {
+      setErrors([String(error)]);
+    }
+  };
+
+  /**
+   * 选中整个目录（directory 安装）：webkitRelativePath 形如
+   * `<folder>/<rel>`，剥掉首段得到 skill 内部相对路径；根上必须有 SKILL.md。
+   */
+  const onPickDirectory = async (input: HTMLInputElement) => {
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    if (files.length === 0) return;
+    setErrors([]);
+    try {
+      const payload: SkillFilePayload[] = [];
+      let folder = "";
+      for (const file of files) {
+        const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        const segments = relative.split("/");
+        folder = segments[0] ?? folder;
+        const inner = segments.slice(1).join("/");
+        if (inner.length === 0) continue; // 目录占位项，跳过
+        payload.push({ path: inner, content: await fileToBase64(file) });
+      }
+      if (!payload.some((entry) => entry.path === "SKILL.md")) {
+        setPicked(undefined);
+        setErrors([`文件夹 "${folder}" 的根目录下没有 SKILL.md`]);
+        return;
+      }
+      setPicked({ label: `${folder}/（${payload.length} 个文件）`, files: payload });
+    } catch (error) {
+      setErrors([String(error)]);
+    }
+  };
+
+  /**
+   * 选中 .zip 压缩包：浏览器端解压 → 剥公共顶层文件夹 → 与宿主下载安装
+   * 同一套 locate 口径定位 skill 根（唯一 SKILL.md 或单 flat .md）→
+   * 重定根为上传清单。
+   */
+  const onPickArchive = async (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    input.value = "";
+    if (file === undefined) return;
+    setErrors([]);
+    try {
+      const entries = await unzip(new Uint8Array(await file.arrayBuffer()));
+      const stripped = stripCommonTopFolder(entries.map((entry) => entry.path));
+      const normalized = entries.map((entry, i) => ({ ...entry, path: stripped[i] }));
+      const located = locateSkillRoot(normalized.map((entry) => entry.path));
+      if (!located.ok) {
+        setPicked(undefined);
+        setErrors([located.error]);
+        return;
+      }
+      const payload = rerootEntries(normalized, located.root).map((entry) => ({ path: entry.path, content: bytesToBase64(entry.data) }));
+      setPicked({ label: `${file.name}（${payload.length} 个文件）`, files: payload });
+    } catch (error) {
+      setPicked(undefined);
+      setErrors([String(error)]);
+    }
+  };
+
+  const doInstall = async () => {
+    setBusy(true);
+    setErrors([]);
+    const scope = scopeChoice === "global" ? "global" : "project";
+    const target = scopeChoice === "project-agents" ? ".agents" : scopeChoice === "project-dsh" ? ".dsh" : undefined;
+    try {
+      const result =
+        mode === "upload"
+          ? await api.installUpload({ scope, target, files: picked?.files ?? [], overwrite })
+          : mode === "path"
+            ? await api.installFromPath({ scope, target, sourcePath: sourcePath.trim(), overwrite })
+            : await api.installFromUrl({ scope, target, url: url.trim(), overwrite });
+      if (!result.ok) {
+        setErrors(result.errors);
+        return;
+      }
+      onInstalled();
+    } catch (error) {
+      setErrors([String(error)]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canSubmit =
+    !busy &&
+    (mode === "upload" ? picked !== undefined : mode === "path" ? sourcePath.trim().length > 0 : url.trim().length > 0);
+
+  return (
+    <Modal title="安装技能" onClose={onClose}>
+      <div className="skp-form">
+        <div className="skp-tabs" role="tablist">
+          {(Object.keys(INSTALL_MODE) as InstallMode[]).map((m) => (
+            <button key={m} role="tab" aria-selected={mode === m} className={mode === m ? "skp-tab skp-tab-active" : "skp-tab"} onClick={() => setMode(m)}>
+              {INSTALL_MODE[m]}
+            </button>
+          ))}
+        </div>
+
+        {mode === "upload" && (
+          <div className="skp-field">
+            <span className="skp-field-label">来源</span>
+            <div className="skp-subheader-row">
+              <button type="button" className="skp-btn" onClick={() => fileInputRef.current?.click()}>
+                选择 .md 文件
+              </button>
+              <button type="button" className="skp-btn" onClick={() => dirInputRef.current?.click()}>
+                选择文件夹
+              </button>
+              <button type="button" className="skp-btn" onClick={() => zipInputRef.current?.click()}>
+                选择 .zip
+              </button>
+            </div>
+            {/* webkitdirectory 非标准属性，React 类型不认识，用 ref 回调设置。 */}
+            <input ref={fileInputRef} type="file" accept=".md,text/markdown" hidden onChange={(e) => void onPickFile(e.currentTarget)} />
+            <input
+              ref={(el) => {
+                dirInputRef.current = el;
+                el?.setAttribute("webkitdirectory", "");
+              }}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => void onPickDirectory(e.currentTarget)}
+            />
+            <input ref={zipInputRef} type="file" accept=".zip,application/zip" hidden onChange={(e) => void onPickArchive(e.currentTarget)} />
+            <span className="skp-note">
+              {picked !== undefined ? `已选择：${picked.label}` : "选择单个 <名称>.md 文件、包含 SKILL.md 的文件夹，或 .zip 压缩包。"}
+            </span>
+          </div>
+        )}
+
+        {mode === "path" && (
+          <div className="skp-field">
+            <span className="skp-field-label">宿主上的源路径</span>
+            <input
+              className="skp-input"
+              type="text"
+              placeholder="/path/to/skill 目录或 <名称>.md"
+              value={sourcePath}
+              onChange={(e) => setSourcePath(e.target.value)}
+            />
+          </div>
+        )}
+
+        {mode === "url" && (
+          <div className="skp-field">
+            <span className="skp-field-label">下载 URL</span>
+            <input
+              className="skp-input"
+              type="url"
+              placeholder="https://github.com/<owner>/<repo>[/tree/<branch>/<dir>] 或 .zip / .md 链接"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+            <span className="skp-note">支持 GitHub 仓库（整库或 /tree/… 子目录）、.zip 链接或 raw .md 链接。</span>
+          </div>
+        )}
+
+        <div className="skp-field">
+          <span className="skp-field-label">安装到</span>
+          <SkpSelect
+            value={scopeChoice}
+            ariaLabel="安装目标"
+            options={[
+              { value: "project-dsh", label: "项目 — .dsh/skills", disabled: !hasWorkspace },
+              { value: "project-agents", label: "项目 — .agents/skills", disabled: !hasWorkspace },
+              { value: "global", label: "全局 — ~/.dsh/skills" },
+            ]}
+            onChange={(value) => setScopeChoice(value as InstallScopeChoice)}
+          />
+        </div>
+
+        <label className="skp-field skp-field-inline">
+          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+          同名技能已存在时覆盖
+        </label>
+
+        {errors.length > 0 && <div className="skp-error">{errors.join("\n")}</div>}
+
+        <div className="skp-modal-actions">
+          <button type="button" className="skp-btn" onClick={onClose}>
+            取消
+          </button>
+          <button type="button" className="skp-btn skp-btn-primary" disabled={!canSubmit} onClick={doInstall}>
+            {busy ? "安装中…" : "安装"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** 导出到宿主路径的小对话框：目标目录 + 覆盖开关。 */
+function ExportToPathDialog({ summary, api, onClose }: { summary: ClientSkillSummary; api: SkillsApi; onClose: () => void }) {
+  const [destDir, setDestDir] = useState("");
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const doExport = async () => {
+    setBusy(true);
+    setErrors([]);
+    try {
+      const result = await api.exportToPath({ ...skillRef(summary), destDir: destDir.trim(), overwrite });
+      if (!result.ok) {
+        setErrors(result.errors);
+        return;
+      }
+      onClose();
+    } catch (error) {
+      setErrors([String(error)]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`将「${summary.name}」导出到路径`} onClose={onClose}>
+      <div className="skp-form">
+        <div className="skp-field">
+          <span className="skp-field-label">宿主上的目标目录</span>
+          <input
+            className="skp-input"
+            type="text"
+            placeholder="/path/to/目标目录"
+            value={destDir}
+            onChange={(e) => setDestDir(e.target.value)}
+          />
+        </div>
+        <label className="skp-field skp-field-inline">
+          <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+          目标已存在时覆盖
+        </label>
+        {errors.length > 0 && <div className="skp-error">{errors.join("\n")}</div>}
+        <div className="skp-modal-actions">
+          <button type="button" className="skp-btn" onClick={onClose}>
+            取消
+          </button>
+          <button type="button" className="skp-btn skp-btn-primary" disabled={busy || destDir.trim().length === 0} onClick={doExport}>
+            {busy ? "导出中…" : "导出"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** File → base64（readAsDataURL 剥掉 `data:…;base64,` 前缀）。 */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error(`读取 ${file.name} 失败`));
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      resolve(dataUrl.slice(dataUrl.indexOf(",") + 1));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/** 字节 → base64（分块避免 fromCharCode 参数过长）。 */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }

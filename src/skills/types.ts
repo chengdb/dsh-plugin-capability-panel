@@ -95,4 +95,6 @@ export interface SkillSummaryView {
   path?: string;
   /** directory 布局时资源基准目录的绝对路径。 */
   resourceDirectory?: string;
+  /** 可写条目所属的受管根目录（客户端写回/导出时按 root 精确寻址）。 */
+  root?: string;
 }

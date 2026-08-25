@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ClientMcpServer, McpApi, OpResult } from "./api.js";
 import type { McpScope, McpServerEntry } from "../mcp/types.js";
+import { SkpSelect } from "./select.js";
 import { SCOPE_LABEL } from "./scope-tabs.js";
 import type { ScopeTab } from "./scope-tabs.js";
 
@@ -26,9 +27,9 @@ type MountInfo = { state: "mounted" | "failed" | "conflict"; error?: string };
 
 /** 挂载状态的展示文案。 */
 const MOUNT_LABEL: Record<MountInfo["state"], string> = {
-  mounted: "mounted",
-  failed: "failed",
-  conflict: "name conflict (mounted by another session)",
+  mounted: "已挂载",
+  failed: "挂载失败",
+  conflict: "名称冲突（已被其他会话挂载）",
 };
 
 /**
@@ -148,7 +149,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
         <input
           className="skp-search"
           type="search"
-          placeholder="Search MCP servers…"
+          placeholder="搜索 MCP 服务器…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -160,14 +161,14 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
             setSelected(undefined);
           }}
         >
-          + Add server
+          + 添加服务器
         </button>
       </div>
 
       {/* 非致命错误行：列表读取问题 / 写操作失败提示。 */}
       {listErrors.length > 0 && <div className="skp-error">{listErrors.join("\n")}</div>}
       {opError && <div className="skp-error">{opError}</div>}
-      {loading && <div className="skp-status">Loading…</div>}
+      {loading && <div className="skp-status">加载中…</div>}
 
       {!loading && (
         <div className="skp-body">
@@ -189,22 +190,24 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
                       {/* 挂载状态圆点：mounted 绿 / failed 红 / conflict 黄 / 未挂载灰。 */}
                       <span
                         className={`skp-dot skp-dot-${mount?.state ?? "none"}`}
-                        title={mount === undefined ? "not mounted in this session" : MOUNT_LABEL[mount.state]}
+                        title={mount === undefined ? "未挂载到当前会话" : MOUNT_LABEL[mount.state]}
                       />
                       {server.key}
                     </span>
                     <span className="skp-row-meta">
-                      <span className={server.scope === "project" ? "skp-tag skp-tag-project" : "skp-tag skp-tag-global"}>{server.scope}</span>
+                      <span className={server.scope === "project" ? "skp-tag skp-tag-project" : "skp-tag skp-tag-global"}>
+                        {server.scope === "project" ? "项目" : "全局"}
+                      </span>
                       <span className="skp-tag skp-tag-flat">{server.transport}</span>
-                      {!server.enabled && <span className="skp-tag skp-tag-readonly">disabled</span>}
-                      {server.shadowed && <span className="skp-tag skp-tag-directory">shadowed</span>}
+                      {!server.enabled && <span className="skp-tag skp-tag-readonly">已禁用</span>}
+                      {server.shadowed && <span className="skp-tag skp-tag-directory">被遮蔽</span>}
                     </span>
                     <span className="skp-row-desc">{server.summary}</span>
                   </button>
                 </li>
               );
             })}
-            {visible.length === 0 && <li className="skp-empty">No MCP servers match.</li>}
+            {visible.length === 0 && <li className="skp-empty">没有匹配的 MCP 服务器。</li>}
           </ul>
 
           <div className="skp-detail">
@@ -230,7 +233,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
                 onDelete={() => onDelete(selectedServer)}
               />
             ) : (
-              <div className="skp-detail-empty">Select a server to view details, or add a new one.</div>
+              <div className="skp-detail-empty">选择一个服务器查看详情，或新增一个。</div>
             )}
           </div>
         </div>
@@ -261,56 +264,59 @@ function McpDetail({
 }) {
   return (
     <div className="skp-detail-card">
-      <h3>{server.key}</h3>
+      {/* 头部：标题 + 操作按钮（编辑 / 启停 / 删除，删除走幽灵红样式）。 */}
+      <div className="skp-detail-head">
+        <h3>{server.key}</h3>
+        <div className="skp-detail-actions">
+          <button type="button" className="skp-btn" onClick={onEdit}>
+            编辑
+          </button>
+          <button type="button" className="skp-btn" onClick={onToggle}>
+            {server.enabled ? "禁用" : "启用"}
+          </button>
+          {/* 二次确认：confirming 时按钮变红并显示确认文案。 */}
+          <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>
+            {confirming ? "确认删除？" : "删除"}
+          </button>
+        </div>
+      </div>
       <dl className="skp-detail-fields">
-        <dt>namespace</dt>
+        <dt>命名空间</dt>
         <dd>mcp__{server.serverName}__*</dd>
         {/* 按传输方式展示不同字段：stdio 显示命令与参数，http 显示 URL。 */}
         {server.transport === "stdio" ? (
           <>
-            <dt>command</dt>
+            <dt>命令</dt>
             <dd className="skp-path">{server.entry.command}</dd>
             {(server.entry.args ?? []).length > 0 && (
               <>
-                <dt>args</dt>
+                <dt>参数</dt>
                 <dd className="skp-path">{(server.entry.args ?? []).join(" ")}</dd>
               </>
             )}
           </>
         ) : (
           <>
-            <dt>url</dt>
+            <dt>URL</dt>
             <dd className="skp-path">{server.entry.url}</dd>
           </>
         )}
-        <dt>scope</dt>
+        <dt>作用域</dt>
         <dd>
-          {server.scope}
-          {server.shadowed ? " (shadowed by the project entry)" : ""}
+          {server.scope === "project" ? "项目" : "全局"}
+          {server.shadowed ? "（被项目级同名条目遮蔽）" : ""}
         </dd>
-        <dt>file</dt>
+        <dt>配置文件</dt>
         <dd className="skp-path">{server.filePath}</dd>
-        <dt>status</dt>
-        <dd>{mount === undefined ? "not mounted in this session" : MOUNT_LABEL[mount.state]}</dd>
+        <dt>状态</dt>
+        <dd>{mount === undefined ? "未挂载到当前会话" : MOUNT_LABEL[mount.state]}</dd>
         {mount?.error !== undefined && (
           <>
-            <dt>error</dt>
+            <dt>错误</dt>
             <dd className="skp-path">{mount.error}</dd>
           </>
         )}
       </dl>
-      <footer className="skp-detail-actions">
-        <button type="button" className="skp-btn" onClick={onEdit}>
-          Edit
-        </button>
-        <button type="button" className="skp-btn" onClick={onToggle}>
-          {server.enabled ? "Disable" : "Enable"}
-        </button>
-        {/* 二次确认：confirming 时按钮变红并显示确认文案。 */}
-        <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn"} onClick={onDelete}>
-          {confirming ? "Confirm delete?" : "Delete"}
-        </button>
-      </footer>
     </div>
   );
 }
@@ -360,13 +366,13 @@ function McpForm({
   /** 客户端前置校验（与宿主的 validateEntry 保持同口径，快速反馈）。 */
   const submit = async () => {
     const problems: string[] = [];
-    if (key.trim().length === 0) problems.push("name must not be empty");
-    if (transport === "stdio" && command.trim().length === 0) problems.push('stdio server requires "command"');
-    if (transport === "http" && url.trim().length === 0) problems.push('http server requires "url"');
+    if (key.trim().length === 0) problems.push("名称不能为空");
+    if (transport === "stdio" && command.trim().length === 0) problems.push('stdio 服务器需要填写「命令」');
+    if (transport === "http" && url.trim().length === 0) problems.push('http 服务器需要填写「URL」');
     const envRecord = linesToRecord(env, "env", problems);
     const headerRecord = linesToRecord(headers, "headers", problems);
     const timeout = timeoutMs.trim().length === 0 ? undefined : Number(timeoutMs);
-    if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) problems.push("timeout must be a positive number (ms)");
+    if (timeout !== undefined && (!Number.isFinite(timeout) || timeout <= 0)) problems.push("超时必须是正数（ms）");
     if (problems.length > 0) {
       setErrors(problems);
       return;
@@ -399,77 +405,81 @@ function McpForm({
 
   return (
     <div className="skp-detail-card">
-      <h3>{isNew ? "Add MCP server" : `Edit ${server?.key}`}</h3>
+      <h3>{isNew ? "添加 MCP 服务器" : `编辑 ${server?.key}`}</h3>
       {errors.length > 0 && <div className="skp-error">{errors.join("\n")}</div>}
       <div className="skp-form">
         <label className="skp-field">
-          <span className="skp-field-label">scope</span>
-          <select
-            className="skp-input"
+          <span className="skp-field-label">作用域</span>
+          <SkpSelect
             value={scope}
             disabled={!isNew}
-            onChange={(e) => setScope(e.target.value === "project" ? "project" : "global")}
-          >
-            {/* 无工作区时禁用项目选项（项目作用域需要 cwd）。 */}
-            <option value="project" disabled={noWorkspace}>
-              project (.mcp.json)
-            </option>
-            <option value="global">global (~/.dsh/mcp.json)</option>
-          </select>
+            ariaLabel="服务器作用域"
+            options={[
+              // 无工作区时禁用项目选项（项目作用域需要 cwd）。
+              { value: "project", label: "项目（.mcp.json）", disabled: noWorkspace },
+              { value: "global", label: "全局（~/.dsh/mcp.json）" },
+            ]}
+            onChange={(value) => setScope(value === "project" ? "project" : "global")}
+          />
         </label>
         <label className="skp-field">
-          <span className="skp-field-label">name</span>
+          <span className="skp-field-label">名称</span>
           <input className="skp-input" value={key} disabled={!isNew} placeholder="github" onChange={(e) => setKey(e.target.value)} />
         </label>
         <label className="skp-field">
-          <span className="skp-field-label">transport</span>
-          <select className="skp-input" value={transport} onChange={(e) => setTransport(e.target.value === "http" ? "http" : "stdio")}>
-            <option value="stdio">stdio (spawn a command)</option>
-            <option value="http">http (streamable http endpoint)</option>
-          </select>
+          <span className="skp-field-label">传输方式</span>
+          <SkpSelect
+            value={transport}
+            ariaLabel="传输方式"
+            options={[
+              { value: "stdio", label: "stdio（启动本地命令）" },
+              { value: "http", label: "http（流式 HTTP 端点）" },
+            ]}
+            onChange={(value) => setTransport(value === "http" ? "http" : "stdio")}
+          />
         </label>
         {/* 按传输方式渲染对应字段：stdio → command/args/env；http → url/headers。 */}
         {transport === "stdio" ? (
           <>
             <label className="skp-field">
-              <span className="skp-field-label">command</span>
+              <span className="skp-field-label">命令</span>
               <input className="skp-input" value={command} placeholder="npx" onChange={(e) => setCommand(e.target.value)} />
             </label>
             <label className="skp-field">
-              <span className="skp-field-label">args (one per line)</span>
+              <span className="skp-field-label">参数（每行一个）</span>
               <textarea className="skp-input skp-textarea" value={args} placeholder={"-y\n@modelcontextprotocol/server-github"} onChange={(e) => setArgs(e.target.value)} />
             </label>
             <label className="skp-field">
-              <span className="skp-field-label">env (KEY=VALUE per line, ${"${VAR}"} allowed)</span>
+              <span className="skp-field-label">环境变量（每行 KEY=VALUE，支持 ${"${VAR}"}）</span>
               <textarea className="skp-input skp-textarea" value={env} placeholder={"GITHUB_TOKEN=${GITHUB_TOKEN}"} onChange={(e) => setEnv(e.target.value)} />
             </label>
           </>
         ) : (
           <>
             <label className="skp-field">
-              <span className="skp-field-label">url</span>
+              <span className="skp-field-label">URL</span>
               <input className="skp-input" value={url} placeholder="http://localhost:3000/mcp" onChange={(e) => setUrl(e.target.value)} />
             </label>
             <label className="skp-field">
-              <span className="skp-field-label">headers (KEY=VALUE per line)</span>
+              <span className="skp-field-label">请求头（每行 KEY=VALUE）</span>
               <textarea className="skp-input skp-textarea" value={headers} onChange={(e) => setHeaders(e.target.value)} />
             </label>
           </>
         )}
         <label className="skp-field">
-          <span className="skp-field-label">tool call timeout (ms, optional)</span>
+          <span className="skp-field-label">工具调用超时（ms，可选）</span>
           <input className="skp-input" value={timeoutMs} inputMode="numeric" placeholder="60000" onChange={(e) => setTimeoutMs(e.target.value)} />
         </label>
         <label className="skp-field skp-field-inline">
           <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} />
-          <span>disabled (keep in file, do not mount)</span>
+          <span>禁用（保留在配置文件中，不挂载）</span>
         </label>
         <div className="skp-detail-actions">
           <button type="button" className="skp-btn skp-btn-primary" disabled={saving} onClick={() => void submit()}>
-            {saving ? "Saving…" : "Save"}
+            {saving ? "保存中…" : "保存"}
           </button>
           <button type="button" className="skp-btn" onClick={onCancel}>
-            Cancel
+            取消
           </button>
         </div>
       </div>
@@ -496,7 +506,7 @@ function linesToRecord(text: string, field: string, problems: string[]): Record<
     if (line.length === 0) continue;
     const eq = line.indexOf("=");
     if (eq <= 0) {
-      problems.push(`${field}: line "${line}" is not KEY=VALUE`);
+      problems.push(`${field}：行「${line}」不是 KEY=VALUE 格式`);
       continue;
     }
     out[line.slice(0, eq).trim()] = line.slice(eq + 1);
