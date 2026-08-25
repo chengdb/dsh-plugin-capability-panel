@@ -11,9 +11,9 @@
 /** 作用域 Tab 的取值。 */
 export type ScopeTab = "all" | "project" | "global";
 
-/** 每个 Tab 的展示文案（当前为硬编码英文，见 client.ts 的 locale 说明）。 */
+/** 每个 Tab 的展示文案（当前为硬编码中文，见 client.ts 的 locale 说明）。 */
 export const SCOPE_LABEL: Record<ScopeTab, string> = {
-  all: "All",
-  project: "Project",
-  global: "Global",
+  all: "全部",
+  project: "项目",
+  global: "全局",
 };

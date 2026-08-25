@@ -27,17 +27,17 @@ const NS = "capabilityPanel";
  * 预留脚手架，两边内容暂时一致。
  */
 const zh = {
-  "panel.title": "Capabilities",
-  "panel.domain.skills": "Skills",
+  "panel.title": "能力面板",
+  "panel.domain.skills": "技能",
   "panel.domain.mcp": "MCP",
-  "panel.scope.all": "All",
-  "panel.scope.project": "Project",
-  "panel.scope.global": "Global",
-  "panel.search": "Search…",
-  "panel.loading": "Loading…",
-  "panel.empty": "Nothing matches.",
-  "panel.readonly": "Read-only",
-  "panel.none": "(no workspace)",
+  "panel.scope.all": "全部",
+  "panel.scope.project": "项目",
+  "panel.scope.global": "全局",
+  "panel.search": "搜索…",
+  "panel.loading": "加载中…",
+  "panel.empty": "没有匹配项。",
+  "panel.readonly": "只读",
+  "panel.none": "（无工作区）",
 };
 
 /** 英文词典，键集合与 zh 完全一致（类型上互相约束，防止漏键）。 */
@@ -130,7 +130,7 @@ export function apply(ctx: any) {
   // false 表示侧栏收窄成 56px 的竖条，此时隐藏文字标签。
   if (ctx.slots?.inject && ctx.slots.register) {
     const dispose = ctx.slots.inject("sidebar.footer.action", () =>
-      ctx.slots.register({ name: "sidebar.footer.action", id: "capability-panel", order: 10, label: "Capabilities" }, (props: { wide?: boolean }) =>
+      ctx.slots.register({ name: "sidebar.footer.action", id: "capability-panel", order: 10, label: "能力面板" }, (props: { wide?: boolean }) =>
         CapabilitiesFooterAction({ api, wide: props?.wide !== false }),
       ),
     );
