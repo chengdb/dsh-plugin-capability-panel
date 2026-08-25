@@ -12,7 +12,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ClientMcpServer, McpApi, OpResult } from "./api.js";
+import { summarizeEntry, transportOf, validateEntry } from "../mcp/entry-util.js";
 import type { McpScope, McpServerEntry } from "../mcp/types.js";
+import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
 import { SCOPE_LABEL } from "./scope-tabs.js";
 import type { ScopeTab } from "./scope-tabs.js";
@@ -44,8 +46,10 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
   const [tab, setTab] = useState<ScopeTab>("all");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | undefined>(undefined);
-  // 编辑态：undefined = 空闲；{ mode: "new" } = 新增表单；{ mode: "edit" } = 编辑表单。
-  const [editing, setEditing] = useState<{ mode: "new" } | { mode: "edit"; server: ClientMcpServer } | undefined>(undefined);
+  // 编辑态：undefined = 空闲；非空 = 正在弹窗里编辑这条 server（McpEditDialog）。
+  const [editServer, setEditServer] = useState<ClientMcpServer | undefined>(undefined);
+  // 新增弹窗开关（表单 / JSON 两种模式见 McpAddDialog）。
+  const [addOpen, setAddOpen] = useState(false);
   // 二次确认删除：记录"待确认的行 id"，再点一次才真正删除。
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined);
 
@@ -157,8 +161,9 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
           type="button"
           className="skp-btn skp-btn-primary"
           onClick={() => {
-            setEditing({ mode: "new" });
+            setEditServer(undefined);
             setSelected(undefined);
+            setAddOpen(true);
           }}
         >
           + 添加服务器
@@ -182,7 +187,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
                     className={selected === id ? "skp-row skp-row-active" : "skp-row"}
                     onClick={() => {
                       setSelected(id);
-                      setEditing(undefined);
+                      setEditServer(undefined);
                       setConfirmDelete(undefined);
                     }}
                   >
@@ -211,24 +216,12 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
           </ul>
 
           <div className="skp-detail">
-            {editing !== undefined ? (
-              <McpForm
-                key={editing.mode === "edit" ? rowId(editing.server) : "new"}
-                mode={editing.mode}
-                server={editing.mode === "edit" ? editing.server : undefined}
-                workspace={workspace}
-                onCancel={() => setEditing(undefined)}
-                onSave={async (scope, key, entry) => {
-                  const ok = await runOp(api.upsert({ scope, key, entry }));
-                  if (ok) setEditing(undefined);
-                }}
-              />
-            ) : selectedServer ? (
+            {selectedServer ? (
               <McpDetail
                 server={selectedServer}
                 mount={mounts[selectedServer.key]}
                 confirming={confirmDelete === rowId(selectedServer)}
-                onEdit={() => setEditing({ mode: "edit", server: selectedServer })}
+                onEdit={() => setEditServer(selectedServer)}
                 onToggle={() => onToggle(selectedServer)}
                 onDelete={() => onDelete(selectedServer)}
               />
@@ -237,6 +230,27 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
             )}
           </div>
         </div>
+      )}
+
+      {/* 新增弹窗：表单 / JSON 两种模式（与技能安装弹窗同构）。 */}
+      {addOpen && (
+        <McpAddDialog
+          api={api}
+          servers={servers}
+          workspace={workspace}
+          onClose={() => setAddOpen(false)}
+          onMutated={() => reload()}
+        />
+      )}
+      {/* 编辑弹窗：与新增同款外壳（Modal + 内嵌表单）。 */}
+      {editServer !== undefined && (
+        <McpEditDialog
+          api={api}
+          server={editServer}
+          workspace={workspace}
+          onClose={() => setEditServer(undefined)}
+          onSaved={() => reload()}
+        />
       )}
     </div>
   );
@@ -326,22 +340,32 @@ function McpDetail({
 // ---------------------------------------------------------------------------
 
 /**
- * 新增 / 编辑表单。
+ * 新增 / 编辑表单（分别内嵌在添加 / 编辑弹窗里，见 McpAddDialog / McpEditDialog）。
  *
  * 多行文本框承载 env / headers（每行 `KEY=VALUE`）与 args（每行一个参数），
- * 提交时解析成结构化字段；新增时 scope 与 name 锁定不可改
- * （编辑改名 = 删除后重建，这里用禁用态规避）。
+ * 提交时解析成结构化字段；新增时 scope 与 name 可改（编辑改名 = 删除后重建，
+ * 这里用禁用态规避）。
+ *
+ * `embedded` 为 true 时褪掉卡片外壳与自带标题，直接作为弹窗内容；
+ * 此时按钮行由 `actionsClass` 指定落到弹窗底部的对齐方式。
+ * onSave 抛错（如宿主校验/落盘失败）时把错误信息展示在表单顶部。
  */
 function McpForm({
   mode,
   server,
   workspace,
+  embedded,
+  actionsClass = "skp-detail-actions",
   onCancel,
   onSave,
 }: {
   mode: "new" | "edit";
   server?: ClientMcpServer;
   workspace?: string;
+  /** 内嵌到弹窗：去掉卡片外壳与自带标题，直接渲染字段。 */
+  embedded?: boolean;
+  /** 按钮行容器类；弹窗内传 `skp-modal-actions`（右对齐）。 */
+  actionsClass?: string;
   onCancel(): void;
   onSave(scope: McpScope, key: string, entry: McpServerEntry): Promise<void>;
 }) {
@@ -398,14 +422,19 @@ function McpForm({
     setSaving(true);
     try {
       await onSave(scope, key.trim(), next);
+      setErrors([]);
+    } catch (error) {
+      // 宿主校验 / 落盘失败：把错误展示在表单顶部（编辑态此前走面板级
+      // opError，新增态弹窗内没有该通道，统一收敛到表单内）。
+      setErrors([error instanceof Error ? error.message : String(error)]);
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="skp-detail-card">
-      <h3>{isNew ? "添加 MCP 服务器" : `编辑 ${server?.key}`}</h3>
+    <div className={embedded ? undefined : "skp-detail-card"}>
+      {!embedded && <h3>{isNew ? "添加 MCP 服务器" : `编辑 ${server?.key}`}</h3>}
       {errors.length > 0 && <div className="skp-error">{errors.join("\n")}</div>}
       <div className="skp-form">
         <label className="skp-field">
@@ -474,14 +503,315 @@ function McpForm({
           <input type="checkbox" checked={disabled} onChange={(e) => setDisabled(e.target.checked)} />
           <span>禁用（保留在配置文件中，不挂载）</span>
         </label>
-        <div className="skp-detail-actions">
+        <div className={actionsClass}>
           <button type="button" className="skp-btn skp-btn-primary" disabled={saving} onClick={() => void submit()}>
-            {saving ? "保存中…" : "保存"}
+            {saving ? (isNew ? "添加中…" : "保存中…") : isNew ? "添加" : "保存"}
           </button>
           <button type="button" className="skp-btn" onClick={onCancel}>
             取消
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 添加弹窗（表单 / JSON）
+// ---------------------------------------------------------------------------
+
+/**
+ * 添加 MCP 服务器弹窗：与技能安装弹窗同构（Modal + 模式 Tab）。
+ *
+ * - 表单：沿用 McpForm（embedded 内嵌）逐字段填写单个条目；
+ * - JSON：粘贴 .mcp.json 或裸服务器映射，实时预览后批量添加。
+ */
+function McpAddDialog({
+  api,
+  servers,
+  workspace,
+  onClose,
+  onMutated,
+}: {
+  api: McpApi;
+  servers: ClientMcpServer[];
+  workspace?: string;
+  onClose(): void;
+  /** 任意写操作成功后刷新列表（不关闭弹窗）。 */
+  onMutated(): void;
+}) {
+  const [tab, setTab] = useState<"form" | "json">("form");
+
+  return (
+    <Modal title="添加 MCP 服务器" onClose={onClose}>
+      <div className="skp-tabs" role="tablist">
+        {(["form", "json"] as const).map((t) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            className={tab === t ? "skp-tab skp-tab-active" : "skp-tab"}
+            onClick={() => setTab(t)}
+          >
+            {t === "form" ? "表单" : "JSON"}
+          </button>
+        ))}
+      </div>
+      {/* 两个子面板常驻挂载：切 Tab 不丢已填内容。 */}
+      <div hidden={tab !== "form"}>
+        <McpForm
+          mode="new"
+          workspace={workspace}
+          embedded
+          actionsClass="skp-modal-actions"
+          onCancel={onClose}
+          onSave={async (scope, key, entry) => {
+            const result = await api.upsert({ scope, key, entry });
+            if (!result.ok) throw new Error(result.errors.join("; "));
+            onMutated();
+            onClose();
+          }}
+        />
+      </div>
+      <div hidden={tab !== "json"}>
+        <McpJsonImport api={api} servers={servers} workspace={workspace} onClose={onClose} onMutated={onMutated} />
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * 编辑 MCP 服务器弹窗：与新增同款外壳（Modal + 内嵌 McpForm）。
+ * 只含表单（JSON 批量导入只属于新增场景）；scope 与 name 在编辑态锁定
+ * （改名 = 删除后重建，沿用 McpForm 的禁用态规避）。
+ */
+function McpEditDialog({
+  api,
+  server,
+  workspace,
+  onClose,
+  onSaved,
+}: {
+  api: McpApi;
+  server: ClientMcpServer;
+  workspace?: string;
+  onClose(): void;
+  /** 保存成功后刷新列表（不关闭弹窗）。 */
+  onSaved(): void;
+}) {
+  return (
+    <Modal title={`编辑 ${server.key}`} onClose={onClose}>
+      <McpForm
+        mode="edit"
+        server={server}
+        workspace={workspace}
+        embedded
+        actionsClass="skp-modal-actions"
+        onCancel={onClose}
+        onSave={async (scope, key, entry) => {
+          const result = await api.upsert({ scope, key, entry });
+          if (!result.ok) throw new Error(result.errors.join("; "));
+          onSaved();
+          onClose();
+        }}
+      />
+    </Modal>
+  );
+}
+
+/** parseMcpJson 解析出的单个条目（键 + 原始条目）。 */
+type ParsedMcpEntry = { key: string; entry: McpServerEntry };
+
+/**
+ * 解析"添加 MCP 服务器"的 JSON 文本为条目清单。
+ *
+ * 接受两种形状：
+ *   - 完整配置文件：`{ "mcpServers": { … } }`（可直接粘贴 .mcp.json）；
+ *   - 裸映射：`{ "github": { … }, "web": { … } }`。
+ * 顶层必须是对象；逐条用与宿主同口径的 validateEntry 校验
+ * （见 mcp/entry-util.ts），任一非法条目都会整体返回错误与逐条原因。
+ */
+function parseMcpJson(text: string): { ok: true; entries: ParsedMcpEntry[] } | { ok: false; errors: string[] } {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    return { ok: false, errors: [`JSON 解析失败：${error instanceof Error ? error.message : String(error)}`] };
+  }
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return { ok: false, errors: ['JSON 顶层必须是对象，例如 { "mcpServers": { … } } 或 { "服务器名": { … } }'] };
+  }
+  const root = data as Record<string, unknown>;
+  // 裸映射的每个值都不是对象 → 更像"单条条目缺名称键"，给出明确提示。
+  if (Object.keys(root).length > 0 && Object.values(root).every((v) => v === null || typeof v !== "object" || Array.isArray(v))) {
+    return { ok: false, errors: ['看起来是单条服务器条目，缺少名称键；请用 { "服务器名": { … } } 包裹。'] };
+  }
+  // 完整配置文件取 mcpServers 键；否则把顶层本身当服务器映射。
+  let servers: unknown;
+  if (typeof root.mcpServers === "object" && root.mcpServers !== null && !Array.isArray(root.mcpServers)) {
+    servers = root.mcpServers;
+  } else if ("mcpServers" in root && Object.keys(root).length === 1) {
+    return { ok: false, errors: ['「mcpServers」必须是服务器对象映射。'] };
+  } else {
+    servers = root;
+  }
+  const entries: ParsedMcpEntry[] = [];
+  const problems: string[] = [];
+  for (const [key, value] of Object.entries(servers as Record<string, unknown>)) {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      problems.push(`${key}: 条目必须是对象`);
+      continue;
+    }
+    const entry = value as McpServerEntry;
+    const entryProblems = validateEntry(key, entry);
+    if (entryProblems.length > 0) {
+      problems.push(`${key}: ${entryProblems.join("; ")}`);
+      continue;
+    }
+    entries.push({ key, entry });
+  }
+  if (problems.length > 0) return { ok: false, errors: problems };
+  if (entries.length === 0) return { ok: false, errors: ["没有可添加的服务器条目。"] };
+  return { ok: true, entries };
+}
+
+/** JSON 文本框占位示例（两种形状都能贴）。 */
+const JSON_PLACEHOLDER = `{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "\${GITHUB_TOKEN}" }
+    },
+    "web": { "type": "http", "url": "http://localhost:3000/mcp" }
+  }
+}`;
+
+/**
+ * JSON 批量添加面板：粘贴 .mcp.json 或裸服务器映射，实时解析并预览
+ * （新增 / 覆盖 / 跳过与逐条错误），确认后逐条写入。
+ *
+ * 逐条**串行** upsert：并发读写同一配置文件会互相覆盖（读-改-写竞态），
+ * 串行保证每次写入都基于最新文件内容。
+ */
+function McpJsonImport({
+  api,
+  servers,
+  workspace,
+  onClose,
+  onMutated,
+}: {
+  api: McpApi;
+  servers: ClientMcpServer[];
+  workspace?: string;
+  onClose(): void;
+  onMutated(): void;
+}) {
+  const noWorkspace = workspace === undefined;
+  const [text, setText] = useState("");
+  const [scope, setScope] = useState<McpScope>(workspace !== undefined ? "project" : "global");
+  const [overwrite, setOverwrite] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [opErrors, setOpErrors] = useState<string[]>([]);
+
+  // 实时解析：文本一变预览区就刷新（整体非法时展示解析错误）。
+  const parse = useMemo(() => parseMcpJson(text), [text]);
+
+  // 预览行：标注每条的状态（将新增 / 将覆盖 / 已存在跳过），供确认与冲突提示。
+  const preview = useMemo(() => {
+    if (!parse.ok) return undefined;
+    return parse.entries.map(({ key, entry }) => {
+      const exists = servers.some((s) => s.scope === scope && s.key === key);
+      return { key, entry, exists, overwriting: exists && overwrite, skipped: exists && !overwrite };
+    });
+  }, [parse, servers, scope, overwrite]);
+
+  const addable = preview?.filter((item) => !item.skipped) ?? [];
+
+  const doAdd = async () => {
+    setBusy(true);
+    setOpErrors([]);
+    const failures: string[] = [];
+    let added = 0;
+    for (const { key, entry } of addable) {
+      const result = await api.upsert({ scope, key, entry });
+      if (result.ok) added += 1;
+      else failures.push(`${key}: ${result.errors.join("; ")}`);
+    }
+    onMutated(); // 已写入的部分先刷新列表与冲突检测
+    if (failures.length > 0) {
+      setOpErrors([`已添加 ${added} 个，失败 ${failures.length} 个：`, ...failures]);
+      setBusy(false);
+      return;
+    }
+    onClose();
+  };
+
+  return (
+    <div className="skp-form">
+      <label className="skp-field">
+        <span className="skp-field-label">JSON 配置</span>
+        <textarea
+          className="skp-input skp-textarea skp-json-field"
+          value={text}
+          spellCheck={false}
+          placeholder={JSON_PLACEHOLDER}
+          onChange={(e) => {
+            setText(e.target.value);
+            setOpErrors([]);
+          }}
+        />
+        <span className="skp-note">支持完整 .mcp.json（含 mcpServers 键），或直接粘贴 {`{ "服务器名": { … } }`} 映射。</span>
+      </label>
+
+      {!parse.ok && text.trim().length > 0 && <div className="skp-error">{parse.errors.join("\n")}</div>}
+
+      {preview !== undefined && preview.length > 0 && (
+        <div className="skp-field">
+          <span className="skp-field-label">将添加 {addable.length}/{preview.length} 个</span>
+          <ul className="skp-import-list">
+            {preview.map(({ key, entry, overwriting, skipped }) => (
+              <li key={key} className="skp-import-item">
+                <span className="skp-import-name">{key}</span>
+                <span className="skp-tag skp-tag-flat">{transportOf(entry)}</span>
+                <span className="skp-import-desc">{summarizeEntry(entry)}</span>
+                <span className={`skp-import-note ${overwriting ? "skp-import-note-over" : skipped ? "skp-import-note-skip" : "skp-import-note-add"}`}>
+                  {overwriting ? "将覆盖" : skipped ? "已存在，跳过" : "将新增"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="skp-field">
+        <span className="skp-field-label">添加到</span>
+        <SkpSelect
+          value={scope}
+          ariaLabel="添加目标作用域"
+          options={[
+            // 无工作区时禁用项目选项（项目作用域需要 cwd）。
+            { value: "project", label: "项目（.mcp.json）", disabled: noWorkspace },
+            { value: "global", label: "全局（~/.dsh/mcp.json）" },
+          ]}
+          onChange={(value) => setScope(value === "project" ? "project" : "global")}
+        />
+      </div>
+
+      <label className="skp-field skp-field-inline">
+        <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+        同名服务器已存在时覆盖
+      </label>
+
+      {opErrors.length > 0 && <div className="skp-error">{opErrors.join("\n")}</div>}
+
+      <div className="skp-modal-actions">
+        <button type="button" className="skp-btn" onClick={onClose}>
+          取消
+        </button>
+        <button type="button" className="skp-btn skp-btn-primary" disabled={busy || addable.length === 0} onClick={() => void doAdd()}>
+          {busy ? "添加中…" : `添加 ${addable.length} 个`}
+        </button>
       </div>
     </div>
   );

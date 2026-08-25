@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CapabilityPanelApi, ClientSkillSummary, SkillFilePayload, SkillsApi } from "./api.js";
 import { McpView } from "./mcp-panel.js";
+import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
 import { SCOPE_LABEL } from "./scope-tabs.js";
 import type { ScopeTab } from "./scope-tabs.js";
@@ -475,18 +476,8 @@ function skillRef(summary: ClientSkillSummary): { name: string; root?: string; s
 // ---------------------------------------------------------------------------
 // 模态框
 // ---------------------------------------------------------------------------
-
-/** 轻量模态框外壳：点遮罩关闭，点内容不穿透。 */
-function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div className="skp-modal-overlay" onClick={onClose}>
-      <div className="skp-modal" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
-        <h3>{title}</h3>
-        {children}
-      </div>
-    </div>
-  );
-}
+// 外壳（skp-modal-overlay / skp-modal）抽到了 modal.tsx 供 Skills 与 MCP
+// 两个域共用；这里的对话框组件只负责各自的内容与提交逻辑。
 
 /** 安装对话框的作用域选项取值（映射到 scope/target 对）。 */
 type InstallScopeChoice = "project-dsh" | "project-agents" | "global";
