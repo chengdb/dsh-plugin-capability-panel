@@ -6,8 +6,8 @@
  *     （快捷消息 / Skills / MCP 顺序）的小锤子图标按钮；无已启用的 MCP server
  *     时空心描边，有启用时实心填充绿色（成功色）；
  *   - `conversation.input.overlay`：ComposerMcpOverlay —— InputBar 浮动
- *     锚点里的弹层，打开时以**整个能力工具组**的左上角为锚（弹层左下角贴
- *     按钮组左上角，position: fixed 视口定位；三个弹层共用同一锚点、切换时
+ *     锚点里的弹层，打开时以**整个能力工具组**的右上角为锚（弹层右下角贴
+ *     按钮组右上角，position: fixed 视口定位；三个弹层共用同一锚点、切换时
  *     位置不跳变），容器与行样式对齐宿主 slash 菜单（MenuView）那一族设计
  *     变量，按 当前项目（.mcp.json）/ 全局（~/.dsh/mcp.json）分组列出
  *     server 名称，逐行开关直接启用/禁用。
@@ -33,8 +33,8 @@ const listeners = new Set<() => void>();
 let openState = false;
 /** 数据修订号：每次打开弹层、写操作（启用/禁用）或手动刷新时递增，按钮与弹层据此重拉。 */
 let openToken = 0;
-/** 打开弹层时能力工具组的视口位置（左上角），弹层据此把左下角贴到按钮组左上角。 */
-let anchorRect: { left: number; top: number } | undefined;
+/** 打开弹层时能力工具组的视口位置（右上角），弹层据此把右下角贴到按钮组右上角。 */
+let anchorRect: { right: number; top: number } | undefined;
 
 function emitChange(): void {
   for (const listener of listeners) {
@@ -62,12 +62,12 @@ export function refreshComposerMcp(): void {
 }
 
 /** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerMcpOpen 会统一派发。 */
-export function setComposerMcpAnchor(rect: { left: number; top: number }): void {
-  anchorRect = { left: rect.left, top: rect.top };
+export function setComposerMcpAnchor(rect: { right: number; top: number }): void {
+  anchorRect = { right: rect.right, top: rect.top };
 }
 
 /** 订阅开合状态（useState + 手动订阅，等价于 mini useSyncExternalStore）。 */
-function useComposerMcpOpen(): { open: boolean; token: number; anchor: { left: number; top: number } | undefined } {
+function useComposerMcpOpen(): { open: boolean; token: number; anchor: { right: number; top: number } | undefined } {
   const [, force] = useState(0);
   useEffect(() => {
     const listener = () => force((n) => n + 1);
@@ -148,7 +148,7 @@ export function ComposerMcpButton({ api }: { api: CapabilityPanelApi }) {
       aria-label="MCP 服务器"
       aria-expanded={open}
       onClick={(event) => {
-        // 以整个能力工具组为锚（左下角贴按钮组左上角），三个弹层共用同一锚点。
+        // 以整个能力工具组为锚（右下角贴按钮组右上角），三个弹层共用同一锚点。
         const group = event.currentTarget.closest(".skp-composer-tools");
         setComposerMcpAnchor((group ?? event.currentTarget).getBoundingClientRect());
         setComposerMcpOpen();
@@ -294,7 +294,7 @@ export function ComposerMcpOverlay({ api }: { api: CapabilityPanelApi }) {
   };
 
   return (
-    // 弹层左下角贴能力工具组左上角（上方间隔 4px）；无锚点时退化为锚点左上方位（CSS 类默认值）。
+    // 弹层右下角贴能力工具组右上角（上方间隔 4px）；无锚点时退化为锚点左上方位（CSS 类默认值）。
     <div
       ref={popRef}
       className="skp-composer-pop"
@@ -305,7 +305,13 @@ export function ComposerMcpOverlay({ api }: { api: CapabilityPanelApi }) {
           ? undefined
           : {
               position: "fixed",
-              left: anchor.left,
+              // 必须显式解除 .skp-composer-pop 兜底定位的 left:0：fixed + 定宽
+              // 弹层若同时带 left 与 right 属于过度约束，LTR 下浏览器忽略 right、
+              // 采用 left，会把弹层钉死在视口左缘（盖住侧边栏）。
+              left: "auto",
+              // 钳制右偏移：极窄视口（按钮组右缘距视口右缘超过 内宽-288）时
+              // 保证弹层左缘不溢出视口左缘（280 = .skp-composer-pop 定宽）。
+              right: Math.min(window.innerWidth - anchor.right, Math.max(8, window.innerWidth - 280 - 8)),
               bottom: window.innerHeight - anchor.top + 4,
               maxHeight: Math.max(120, Math.min(320, anchor.top - 12)),
             }

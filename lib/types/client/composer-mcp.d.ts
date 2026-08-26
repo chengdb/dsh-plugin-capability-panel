@@ -6,8 +6,8 @@
  *     （快捷消息 / Skills / MCP 顺序）的小锤子图标按钮；无已启用的 MCP server
  *     时空心描边，有启用时实心填充绿色（成功色）；
  *   - `conversation.input.overlay`：ComposerMcpOverlay —— InputBar 浮动
- *     锚点里的弹层，打开时以**整个能力工具组**的左上角为锚（弹层左下角贴
- *     按钮组左上角，position: fixed 视口定位；三个弹层共用同一锚点、切换时
+ *     锚点里的弹层，打开时以**整个能力工具组**的右上角为锚（弹层右下角贴
+ *     按钮组右上角，position: fixed 视口定位；三个弹层共用同一锚点、切换时
  *     位置不跳变），容器与行样式对齐宿主 slash 菜单（MenuView）那一族设计
  *     变量，按 当前项目（.mcp.json）/ 全局（~/.dsh/mcp.json）分组列出
  *     server 名称，逐行开关直接启用/禁用。
@@ -28,7 +28,7 @@ export declare function setComposerMcpOpen(open?: boolean): void;
 export declare function refreshComposerMcp(): void;
 /** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerMcpOpen 会统一派发。 */
 export declare function setComposerMcpAnchor(rect: {
-    left: number;
+    right: number;
     top: number;
 }): void;
 /**

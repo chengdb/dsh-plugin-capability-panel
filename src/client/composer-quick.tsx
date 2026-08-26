@@ -7,14 +7,18 @@
  *     图标恒为空心描边（中性灰），不做启用态实心/变绿——快捷消息没有
  *     "草稿里已触发"或"存在已启用"这类需要聚合信号；
  *   - `conversation.input.overlay`：ComposerQuickOverlay —— InputBar 浮动
- *     锚点里的弹层，打开时以**整个能力工具组**的左上角为锚（弹层左下角贴
- *     按钮组左上角，三个弹层共用同一锚点、切换时位置不跳变），容器与
+ *     锚点里的弹层，打开时以**整个能力工具组**的右上角为锚（弹层右下角贴
+ *     按钮组右上角，三个弹层共用同一锚点、切换时位置不跳变），容器与
  *     行样式对齐宿主 slash 菜单（MenuView）那一族设计变量，按
  *     当前项目/全局 分组列出**已启用**的快捷消息（名称 + 正文单行省略），
  *     顶部一个过滤输入框。
  *
  * 点击某行把该消息的正文追加到当前会话的输入草稿并关闭弹层，随后焦点还
  * 给 composer 的 textarea、光标落在草稿末尾，可以直接继续输入或回车发送。
+ * 行右侧还有一个 hover / 键盘聚焦时浮现的小按钮（与宿主主发送键同款向上
+ * 箭头图标，28×28 方形圆角）：一键把该消息正文作为完整内容直接发送——先
+ * `setDraft` 覆盖草稿、再 `submit()` 进入宿主提交流水线，不再经过输入框
+ * 草稿。
  * 快捷消息是纯文本（可多行），不像 skills 那样走 `/名称 ` 口令——正文里
  * 若包含 `/skill` 形式的口令，宿主仍会照常渲染成 chip（草稿渲染按词表
  * 扫描），这里不做任何特殊处理。
@@ -22,8 +26,9 @@
  * 草稿读写走 session 标准套件：`conversation.input.overlay` 是 session
  * 作用域槽，ui-conversation 的 provide 贡献（hooks: ["input"]、
  * props: ["inputActions"]）会把 `useInput` / `inputActions` 注入条目
- * props；写入只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
- * 写路径），读取用 `useInput((s) => s.draft)` 选择器订阅。
+ * props；追加草稿只调 `inputActions.setDraft(完整新草稿)`，直接发送在
+ * `setDraft` 之后调 `inputActions.submit()`（把当前草稿送进宿主提交流水线），
+ * 读取用 `useInput((s) => s.draft)` 选择器订阅。
  *
  * 两个入口是两棵独立的 React 树，开合状态用模块级微存储共享（与
  * composer-mcp / composer-skills 同一模式）。按钮无需拉取任何数据
@@ -43,8 +48,8 @@ const listeners = new Set<() => void>();
 let openState = false;
 /** 数据修订号：每次打开弹层时递增，弹层据此重拉列表（按钮不依赖数据）。 */
 let openToken = 0;
-/** 打开弹层时能力工具组的视口位置（左上角），弹层据此把左下角贴到按钮组左上角。 */
-let anchorRect: { left: number; top: number } | undefined;
+/** 打开弹层时能力工具组的视口位置（右上角），弹层据此把右下角贴到按钮组右上角。 */
+let anchorRect: { right: number; top: number } | undefined;
 
 function emitChange(): void {
   for (const listener of listeners) {
@@ -66,12 +71,12 @@ export function setComposerQuickOpen(open?: boolean): void {
 }
 
 /** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerQuickOpen 会统一派发。 */
-export function setComposerQuickAnchor(rect: { left: number; top: number }): void {
-  anchorRect = { left: rect.left, top: rect.top };
+export function setComposerQuickAnchor(rect: { right: number; top: number }): void {
+  anchorRect = { right: rect.right, top: rect.top };
 }
 
 /** 订阅开合状态（useState + 手动订阅，等价于 mini useSyncExternalStore）。 */
-function useComposerQuickOpen(): { open: boolean; token: number; anchor: { left: number; top: number } | undefined } {
+function useComposerQuickOpen(): { open: boolean; token: number; anchor: { right: number; top: number } | undefined } {
   const [, force] = useState(0);
   useEffect(() => {
     const listener = () => force((n) => n + 1);
@@ -103,6 +108,18 @@ function BubbleIcon() {
   );
 }
 
+/** 发送（向上箭头）图标（16px）：与宿主主发送键同款路径（16×16 viewBox，纯填充）。 */
+const SEND_PATH =
+  "M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z";
+
+function SendIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path d={SEND_PATH} fill="currentColor" />
+    </svg>
+  );
+}
+
 /**
  * 聊天气泡按钮：点击开合弹层。图标恒为空心描边（中性灰），不做启用态
  * 实心/变绿（skp-composer-btn-active）；打开时仅由按钮自身类切换背景与
@@ -123,7 +140,7 @@ export function ComposerQuickButton() {
       aria-label="快捷消息"
       aria-expanded={open}
       onClick={(event) => {
-        // 以整个能力工具组为锚（左下角贴按钮组左上角），三个弹层共用同一锚点。
+        // 以整个能力工具组为锚（右下角贴按钮组右上角），三个弹层共用同一锚点。
         const group = event.currentTarget.closest(".skp-composer-tools");
         setComposerQuickAnchor((group ?? event.currentTarget).getBoundingClientRect());
         setComposerQuickOpen();
@@ -139,11 +156,13 @@ export function ComposerQuickButton() {
 // ---------------------------------------------------------------------------
 
 /** session 标准套件注入的输入选择器钩子（ui-conversation provide 的 hooks: ["input"]）。 */
-type UseInputHook = <S>(sel: (s: { draft: string }) => S, eq?: (a: S, b: S) => boolean) => S;
+type UseInputHook = <S>(sel: (s: { draft: string; phase?: string }) => S, eq?: (a: S, b: S) => boolean) => S;
 
 /** session 标准套件注入的输入动作面（ui-conversation provide 的 props: ["inputActions"]）。 */
 interface InputActionsFace {
   setDraft(text: string): void;
+  /** 提交当前草稿（进入宿主提交流水线）；行内"直接发送"按钮使用。 */
+  submit(): void;
 }
 
 /** 服务是否属于"项目系"（与面板的分组口径一致）。 */
@@ -261,7 +280,7 @@ function QuickPop({
   useInput,
   inputActions,
 }: {
-  anchor: { left: number; top: number } | undefined;
+  anchor: { right: number; top: number } | undefined;
   popRef: React.RefObject<HTMLDivElement>;
   messages: ClientQuickMessage[];
   loading: boolean;
@@ -274,7 +293,14 @@ function QuickPop({
   // 订阅当前草稿（session 套件缺席时退化为空串，且插入动作同时被禁用，
   // 不会用空串覆盖真实草稿）。
   const draft = typeof useInput === "function" ? useInput((s) => (typeof s?.draft === "string" ? s.draft : "")) : "";
+  // 订阅输入机相位：adjudicating/submitting 期间宿主的 submit() 会被 onEnter
+  // 首行的相位守卫直接丢弃，而 setDraft 无相位守卫仍会覆盖草稿——此时"直接
+  // 发送"会让消息静默丢失（在途提交落地时 onSubmitSettled 再把草稿清空），
+  // 故忙时不渲染发送按钮（对照宿主主发送键的 machineBusy 禁用态）。
+  const phase = typeof useInput === "function" ? useInput((s) => (typeof s?.phase === "string" ? s.phase : "")) : "";
+  const machineBusy = phase === "adjudicating" || phase === "submitting";
   const canInsert = typeof inputActions?.setDraft === "function";
+  const canSend = canInsert && typeof inputActions?.submit === "function" && !machineBusy;
 
   /**
    * 从弹层自身向上找 composer 的 textarea：弹层锚点挂在 InputBar 子树内，
@@ -309,6 +335,14 @@ function QuickPop({
     }
   };
 
+  /** 把快捷消息的正文作为完整内容直接发送（先覆盖草稿、再提交进宿主提交流水线），并关闭弹层。 */
+  const onSend = (message: ClientQuickMessage) => {
+    if (!canSend) return;
+    inputActions.setDraft(message.text);
+    setComposerQuickOpen(false);
+    inputActions.submit();
+  };
+
   const keyword = query.trim().toLowerCase();
   const filtered =
     keyword.length === 0
@@ -319,19 +353,37 @@ function QuickPop({
   const project = filtered.filter((m) => isProjectScope(m.scope));
   const globalList = filtered.filter((m) => !isProjectScope(m.scope));
 
-  const renderRow = (message: ClientQuickMessage) => (
-    <button
-      key={`${message.scope}:${message.name}`}
-      type="button"
-      className="skp-composer-skill"
-      disabled={!canInsert}
-      title={canInsert ? `输入「${message.name}」` : "当前会话不支持快速输入"}
-      onClick={() => onPick(message)}
-    >
-      <span className="skp-composer-skill-name">{message.name}</span>
-      <span className="skp-composer-skill-desc">{message.text}</span>
-    </button>
-  );
+  const renderRow = (message: ClientQuickMessage) => {
+    // 直接发送会整体覆盖当前草稿，且发送成功后宿主 commitSend 切断 undo
+    // 历史，被覆盖的草稿不可恢复——草稿非空时在提示文案里显式预警。
+    const sendLabel =
+      draft.trim() === "" ? `直接发送「${message.name}」` : `覆盖当前草稿并直接发送「${message.name}」`;
+    return (
+      <div key={`${message.scope}:${message.name}`} className="skp-composer-quick-row">
+        <button
+          type="button"
+          className="skp-composer-quick-pick"
+          disabled={!canInsert}
+          title={canInsert ? `输入「${message.name}」` : "当前会话不支持快速输入"}
+          onClick={() => onPick(message)}
+        >
+          <span className="skp-composer-skill-name">{message.name}</span>
+          <span className="skp-composer-skill-desc">{message.text}</span>
+        </button>
+        {canSend && (
+          <button
+            type="button"
+            className="skp-composer-quick-send"
+            title={sendLabel}
+            aria-label={sendLabel}
+            onClick={() => onSend(message)}
+          >
+            <SendIcon />
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -344,7 +396,13 @@ function QuickPop({
           ? undefined
           : {
               position: "fixed",
-              left: anchor.left,
+              // 必须显式解除 .skp-composer-pop 兜底定位的 left:0：fixed + 定宽
+              // 弹层若同时带 left 与 right 属于过度约束，LTR 下浏览器忽略 right、
+              // 采用 left，会把弹层钉死在视口左缘（盖住侧边栏）。
+              left: "auto",
+              // 钳制右偏移：极窄视口（按钮组右缘距视口右缘超过 内宽-288）时
+              // 保证弹层左缘不溢出视口左缘（280 = .skp-composer-pop 定宽）。
+              right: Math.min(window.innerWidth - anchor.right, Math.max(8, window.innerWidth - 280 - 8)),
               bottom: window.innerHeight - anchor.top + 4,
               maxHeight: Math.max(120, Math.min(320, anchor.top - 12)),
             }

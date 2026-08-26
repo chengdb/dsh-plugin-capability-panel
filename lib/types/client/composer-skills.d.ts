@@ -6,8 +6,8 @@
  *     闪电图标按钮（快捷消息 / Skills / MCP 顺序）；草稿里不含已知 `/skill`
  *     口令时空心描边，含已知口令时实心填充绿色（成功色）；
  *   - `conversation.input.overlay`：ComposerSkillsOverlay —— InputBar 浮动
- *     锚点里的弹层，打开时以**整个能力工具组**的左上角为锚（弹层左下角贴
- *     按钮组左上角，三个弹层共用同一锚点、切换时位置不跳变），容器与行样式
+ *     锚点里的弹层，打开时以**整个能力工具组**的右上角为锚（弹层右下角贴
+ *     按钮组右上角，三个弹层共用同一锚点、切换时位置不跳变），容器与行样式
  *     对齐宿主 slash 菜单（MenuView）那一族设计变量，按 当前项目/全局 分组
  *     列出 user-invocable 的 skill（名称 + 描述单行省略）。
  *
@@ -37,7 +37,7 @@ import type { CapabilityPanelApi } from "./api.js";
 export declare function setComposerSkillsOpen(open?: boolean): void;
 /** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerSkillsOpen 会统一派发。 */
 export declare function setComposerSkillsAnchor(rect: {
-    left: number;
+    right: number;
     top: number;
 }): void;
 /**
