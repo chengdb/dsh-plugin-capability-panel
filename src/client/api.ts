@@ -183,6 +183,37 @@ export interface McpApi {
 }
 
 // ---------------------------------------------------------------------------
+// 快捷消息域
+// ---------------------------------------------------------------------------
+
+/** 面板视角下的一条快捷消息（跨作用域合并后的视图）。 */
+export interface ClientQuickMessage {
+  /** 消息名称（文件里的键名）。 */
+  name: string;
+  scope: "project" | "global";
+  /** 是否启用（disabled 缺省为启用）。 */
+  enabled: boolean;
+  /** 消息正文（插入草稿时原样追加）。 */
+  text: string;
+  /** 声明这条消息的文件绝对路径。 */
+  filePath: string;
+}
+
+/** 合并列表结果：messages + 非致命的读取错误。 */
+export interface ClientQuickMessagesList {
+  messages: ClientQuickMessage[];
+  errors: string[];
+}
+
+/** 快捷消息域的面板 API。 */
+export interface QuickMessagesApi {
+  list(): Promise<ClientQuickMessagesList>;
+  upsert(input: { scope: "project" | "global"; name: string; text: string }): Promise<OpResult>;
+  remove(input: { scope: "project" | "global"; name: string }): Promise<OpResult>;
+  setEnabled(input: { scope: "project" | "global"; name: string; enabled: boolean }): Promise<OpResult>;
+}
+
+// ---------------------------------------------------------------------------
 // 面板根（跨域公共部分）
 // ---------------------------------------------------------------------------
 
@@ -193,10 +224,11 @@ export interface WorkspaceOption {
   title?: string;
 }
 
-/** 面板需要的全部宿主能力（skills + mcp + 工作区选择），传输无关。 */
+/** 面板需要的全部宿主能力（skills + mcp + 快捷消息 + 工作区选择），传输无关。 */
 export interface CapabilityPanelApi {
   skills: SkillsApi;
   mcp: McpApi;
+  quickMessages: QuickMessagesApi;
   /** 面板头部的"项目作用域"目录标签。 */
   workspaceLabel(): string;
   /**

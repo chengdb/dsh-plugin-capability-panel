@@ -22,8 +22,8 @@
 // 下拉按钮与弹出列表共享同一套描边 / 圆角 / 层级约定（z-index 120 高于
 // 面板浮层 90 与模态框 95）。
 //
-// skp-composer-* 是输入框工具行的 MCP 快捷开关与 Skills 快捷输入
-// （见 composer-mcp.tsx / composer-skills.tsx）：
+// skp-composer-* 是输入框工具行的 MCP 快捷开关、Skills 快捷输入与
+// 快捷消息（见 composer-mcp.tsx / composer-skills.tsx / composer-quick.tsx）：
 // 按钮与弹层都注册在输入区槽位（conversation.input.left / .overlay），
 // 不在 .skp-panel 子树内，因此这组规则不复用 --skp-* 令牌，一律直接用
 // 宿主的 --dsw-alias-* 主题变量（加中性色兜底），跟随宿主主题/明暗切换。
@@ -186,6 +186,7 @@ export const SKP_CSS = `
 .skp-composer-empty code{font-family:var(--ds-font-family-code,ui-monospace,monospace);font-size:11px;background:var(--dsw-alias-interactive-bg-hover,rgba(20,28,40,.05));border-radius:4px;padding:1px 4px;}
 .skp-composer-banner{margin:2px 6px 4px;padding:6px 8px;border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-state-error-primary,#d64545) 8%,transparent);color:var(--dsw-alias-state-error-primary,#d64545);font-size:12px;line-height:18px;white-space:pre-wrap;}
 .skp-composer-pop-skills{width:340px;}
+.skp-composer-pop-quick{width:340px;}
 .skp-composer-search{flex:none;width:calc(100% - 8px);height:30px;margin:2px 4px 4px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2,rgba(20,28,40,.08));border-radius:8px;background:transparent;font:inherit;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary,#1b1f26);outline:none;transition:border-color .15s ease;}
 .skp-composer-search::placeholder{color:var(--dsw-alias-label-dimmed,#9aa3b2);}
 .skp-composer-search:focus-visible{border-color:var(--dsw-alias-border-l3,rgba(20,28,40,.16));}

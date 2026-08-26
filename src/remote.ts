@@ -44,7 +44,7 @@ function failure(errors: readonly string[]): RpcResult {
   return { ok: true, value: { ok: false, errors: [...errors] } };
 }
 
-/** 被路由的服务形状（两个域的方法签名）。 */
+/** 被路由的服务形状（各域的方法签名）。 */
 export interface PanelRpcService {
   skills: {
     list(cwd?: string): Promise<unknown>;
@@ -62,6 +62,12 @@ export interface PanelRpcService {
     remove(input: unknown): Promise<unknown>;
     setEnabled(input: unknown): Promise<unknown>;
     status(cwd?: string): unknown;
+  };
+  quickMessages: {
+    list(cwd?: string): Promise<unknown>;
+    upsert(input: unknown): Promise<unknown>;
+    remove(input: unknown): Promise<unknown>;
+    setEnabled(input: unknown): Promise<unknown>;
   };
 }
 
@@ -103,6 +109,14 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.mcp.setEnabled(p) };
       case "mcp.status":
         return { ok: true, value: service.mcp.status(cwd) };
+      case "quick.list":
+        return { ok: true, value: await service.quickMessages.list(cwd) };
+      case "quick.upsert":
+        return { ok: true, value: await service.quickMessages.upsert(p) };
+      case "quick.remove":
+        return { ok: true, value: await service.quickMessages.remove(p) };
+      case "quick.setEnabled":
+        return { ok: true, value: await service.quickMessages.setEnabled(p) };
       default:
         return failure([`unknown endpoint "${endpoint}"`]);
     }

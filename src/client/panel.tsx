@@ -2,6 +2,8 @@
  * Capability Panel 的 React 视图（侧栏底部按钮弹出的浮层面板）。
  *
  * 根容器按能力域分 Tab：
+ *   - 快捷消息：项目 + 全局快捷语，支持搜索/过滤与详情视图（见
+ *     `quick-messages-panel.tsx`）；
  *   - Skills：项目 + 全局技能，支持搜索/过滤与详情视图；
  *   - MCP：项目 `.mcp.json` + 全局 `mcp.json` 的 server 管理，
  *     带每个 session 的实时挂载状态（见 `mcp-panel.tsx`）。
@@ -15,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CapabilityPanelApi, ClientSkillSummary, SkillFilePayload, SkillsApi } from "./api.js";
 import { McpView } from "./mcp-panel.js";
+import { QuickMessagesPanel } from "./quick-messages-panel.js";
 import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
 import { SCOPE_LABEL } from "./scope-tabs.js";
@@ -23,11 +26,12 @@ import { locateSkillRoot, rerootEntries, stripCommonTopFolder } from "../shared/
 import { unzip } from "./unzip.js";
 import { base64ToBytes, buildZip, downloadBytes } from "./zip.js";
 
-/** 域 Tab 的取值（对应面板头部的两个主 Tab）。 */
-type DomainTab = "skills" | "mcp";
+/** 域 Tab 的取值（对应面板头部的三个主 Tab）。 */
+type DomainTab = "quickMessages" | "skills" | "mcp";
 
 /** 每个域 Tab 的展示文案（当前硬编码中文，见 client.ts 的 locale 说明）。 */
 const DOMAIN_LABEL: Record<DomainTab, string> = {
+  quickMessages: "快捷消息",
   skills: "技能",
   mcp: "MCP",
 };
@@ -100,9 +104,9 @@ export function CapabilityPanel({ api, onClose }: { api: CapabilityPanelApi; onC
             )}
           </div>
         </div>
-        {/* 域 Tab：skills / mcp 之间切换视图。 */}
+        {/* 域 Tab：快捷消息 / skills / mcp 之间切换视图。 */}
         <div className="skp-tabs" role="tablist">
-          {(["skills", "mcp"] as DomainTab[]).map((d) => (
+          {(["quickMessages", "skills", "mcp"] as DomainTab[]).map((d) => (
             <button
               key={d}
               role="tab"
@@ -116,7 +120,13 @@ export function CapabilityPanel({ api, onClose }: { api: CapabilityPanelApi; onC
         </div>
       </header>
 
-      {domain === "skills" ? <SkillsView api={api.skills} workspace={workspace} /> : <McpView api={api.mcp} workspace={workspace} />}
+      {domain === "skills" ? (
+        <SkillsView api={api.skills} workspace={workspace} />
+      ) : domain === "mcp" ? (
+        <McpView api={api.mcp} workspace={workspace} />
+      ) : (
+        <QuickMessagesPanel api={api.quickMessages} workspace={workspace} />
+      )}
     </section>
   );
 }

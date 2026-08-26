@@ -19,6 +19,7 @@ import { installStyles } from "./client/styles.js";
 import { CapabilitiesFooterAction } from "./client/panel.js";
 import { ComposerMcpButton, ComposerMcpOverlay } from "./client/composer-mcp.js";
 import { ComposerSkillsButton, ComposerSkillsOverlay } from "./client/composer-skills.js";
+import { ComposerQuickButton, ComposerQuickOverlay } from "./client/composer-quick.js";
 
 /** locale 字典的命名空间。 */
 const NS = "capabilityPanel";
@@ -140,19 +141,22 @@ export function apply(ctx: any) {
     if (typeof dispose === "function") disposers.push(dispose);
   }
 
-  // 输入框工具行的能力工具组：Skills 快捷输入（见 composer-skills.tsx）与
-  // MCP 快捷开关（见 composer-mcp.tsx）两个按钮合并在同一个
-  // `conversation.input.left` 条目里（圆角容器 + 2px 间距，视觉上是一个
-  // 按钮组）。按钮从 owner props（InputZone）读 input 草稿快照；两个弹层仍
-  // 分别注册在 `conversation.input.overlay`，开合状态各自独立、外部点击
-  // 互斥关闭。Skills 弹层从 session 标准套件读 useInput / inputActions，
-  // 点击某行把 `/name ` 追加进草稿（宿主 ui-skill '/' 源的同款口令形式）。
+  // 输入框工具行的能力工具组：快捷消息（见 composer-quick.tsx）、
+  // Skills 快捷输入（见 composer-skills.tsx）与 MCP 快捷开关（见
+  // composer-mcp.tsx）三个按钮合并在同一个 `conversation.input.left` 条目里
+  // （圆角容器 + 2px 间距，视觉上是一个按钮组），顺序与面板域 Tab 一致：
+  // 快捷消息 / Skills / MCP。按钮从 owner props（InputZone）读 input
+  // 草稿快照；三个弹层仍分别注册在 `conversation.input.overlay`，开合状态
+  // 各自独立、外部点击互斥关闭。Skills 与快捷消息弹层从 session 标准套件
+  // 读 useInput / inputActions：Skills 点击某行把 `/name ` 追加进草稿（宿主
+  // ui-skill '/' 源的同款口令形式），快捷消息点击把正文追加进草稿。
   if (ctx.slots?.inject && ctx.slots.register) {
     const disposeTools = ctx.slots.inject("conversation.input.left", () =>
       ctx.slots.register({ name: "conversation.input.left", id: "capability-panel-tools", order: 10, label: "能力工具" }, (props: any) =>
         createElement(
           "div",
           { className: "skp-composer-tools" },
+          ComposerQuickButton(),
           ComposerSkillsButton({ api, draft: typeof props?.input?.draft === "string" ? props.input.draft : "" }),
           ComposerMcpButton({ api }),
         ),
@@ -169,6 +173,20 @@ export function apply(ctx: any) {
       ),
     );
     if (typeof disposeSkillsOverlay === "function") disposers.push(disposeSkillsOverlay);
+
+    // 快捷消息的弹层（按钮已并入上方"能力工具"组条目）：同样注册在
+    // `conversation.input.overlay`，与 Skills 弹层共用 session 标准套件的
+    // useInput / inputActions。
+    const disposeQuickOverlay = ctx.slots.inject("conversation.input.overlay", () =>
+      ctx.slots.register({ name: "conversation.input.overlay", id: "capability-panel-quick", order: 7, label: "快捷消息" }, (props: any) =>
+        ComposerQuickOverlay({
+          api,
+          useInput: typeof props?.useInput === "function" ? props.useInput : undefined,
+          inputActions: typeof props?.inputActions?.setDraft === "function" ? props.inputActions : undefined,
+        }),
+      ),
+    );
+    if (typeof disposeQuickOverlay === "function") disposers.push(disposeQuickOverlay);
 
     // MCP 快捷开关的弹层（按钮已并入上方"能力工具"组条目）：同样注册在
     // `conversation.input.overlay`。开合状态由 composer-mcp 模块内的微存储

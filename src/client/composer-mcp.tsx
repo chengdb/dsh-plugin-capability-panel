@@ -2,14 +2,15 @@
  * 输入框工具行的 MCP 快捷开关。
  *
  * 两个槽入口（在 client.ts 注册）：
- *   - `conversation.input.left`：ComposerMcpButton —— 输入框工具行左侧
- *     （access-mode 控件右侧）的小锤子图标按钮；无已启用的 MCP server
+ *   - `conversation.input.left`：ComposerMcpButton —— 能力工具组末尾
+ *     （快捷消息 / Skills / MCP 顺序）的小锤子图标按钮；无已启用的 MCP server
  *     时空心描边，有启用时实心填充绿色（成功色）；
  *   - `conversation.input.overlay`：ComposerMcpOverlay —— InputBar 浮动
- *     锚点里的弹层，打开时以按钮左上角为锚（左下角贴着按钮左上角，
- *     position: fixed 视口定位），容器与行样式对齐宿主 slash 菜单
- *     （MenuView）那一族设计变量，按 当前项目（.mcp.json）/
- *     全局（~/.dsh/mcp.json）分组列出 server 名称，逐行开关直接启用/禁用。
+ *     锚点里的弹层，打开时以**整个能力工具组**的左上角为锚（弹层左下角贴
+ *     按钮组左上角，position: fixed 视口定位；三个弹层共用同一锚点、切换时
+ *     位置不跳变），容器与行样式对齐宿主 slash 菜单（MenuView）那一族设计
+ *     变量，按 当前项目（.mcp.json）/ 全局（~/.dsh/mcp.json）分组列出
+ *     server 名称，逐行开关直接启用/禁用。
  *
  * 两个入口是两棵独立的 React 树，开合状态用模块级微存储共享（与
  * ui-commands 的 popupSelect 同一模式：各自读 store，关闭时渲染 null）。
@@ -32,7 +33,7 @@ const listeners = new Set<() => void>();
 let openState = false;
 /** 数据修订号：每次打开弹层、写操作（启用/禁用）或手动刷新时递增，按钮与弹层据此重拉。 */
 let openToken = 0;
-/** 打开弹层时按钮的视口位置（左上角），弹层据此把左下角贴到按钮左上角。 */
+/** 打开弹层时能力工具组的视口位置（左上角），弹层据此把左下角贴到按钮组左上角。 */
 let anchorRect: { left: number; top: number } | undefined;
 
 function emitChange(): void {
@@ -60,7 +61,7 @@ export function refreshComposerMcp(): void {
   emitChange();
 }
 
-/** 记录按钮的视口位置（在打开弹层前调用）；紧随的 setComposerMcpOpen 会统一派发。 */
+/** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerMcpOpen 会统一派发。 */
 export function setComposerMcpAnchor(rect: { left: number; top: number }): void {
   anchorRect = { left: rect.left, top: rect.top };
 }
@@ -147,7 +148,9 @@ export function ComposerMcpButton({ api }: { api: CapabilityPanelApi }) {
       aria-label="MCP 服务器"
       aria-expanded={open}
       onClick={(event) => {
-        setComposerMcpAnchor(event.currentTarget.getBoundingClientRect());
+        // 以整个能力工具组为锚（左下角贴按钮组左上角），三个弹层共用同一锚点。
+        const group = event.currentTarget.closest(".skp-composer-tools");
+        setComposerMcpAnchor((group ?? event.currentTarget).getBoundingClientRect());
         setComposerMcpOpen();
       }}
     >
@@ -291,7 +294,7 @@ export function ComposerMcpOverlay({ api }: { api: CapabilityPanelApi }) {
   };
 
   return (
-    // 弹层左下角贴按钮左上角（上方间隔 4px）；无锚点时退化为锚点左上方位（CSS 类默认值）。
+    // 弹层左下角贴能力工具组左上角（上方间隔 4px）；无锚点时退化为锚点左上方位（CSS 类默认值）。
     <div
       ref={popRef}
       className="skp-composer-pop"
