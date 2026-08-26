@@ -119,12 +119,28 @@ Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作
 
 ## 安装
 
-直接从 GitHub 安装（推荐）：
+安装最新 release（推荐，版本钉死）：
+
+```powershell
+dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v0.7.0"
+dsh web        # 打开 Web GUI，侧栏底部可见「能力面板」
+```
+
+跟随 `master` 最新代码（无 release 时可临时用）：
 
 ```powershell
 dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#master"
-dsh web        # 打开 Web GUI，侧栏底部可见「能力面板」
 ```
+
+## 卸载
+
+```powershell
+dsh plugin --profile web remove @chengdb/capability-panel
+```
+
+移除后重新运行 `dsh web` 即可，侧栏入口与输入框工具组随之消失。卸载**不会**触碰
+你已经管理的任何数据——`.dsh/skills`、`.mcp.json`、`quick-messages.json`
+等文件全部原样保留，随时可重新安装接管。
 
 ## 本地开发
 
@@ -135,6 +151,21 @@ pnpm build     # tsc（lib/*.js + .d.ts）→ tsdown（lib/client.js 包裹版�
 dsh plugin --profile web add "link:<本仓库路径>"
 dsh web
 ```
+
+## 发布新版本
+
+```powershell
+pnpm build                                   # 重新构建 lib/ 产物
+git add -A
+git commit -m "chore: release vX.Y.Z"        # 与 package.json 版本号一致
+git tag vX.Y.Z
+git push origin master --tags
+gh release create vX.Y.Z --generate-notes    # 可选，创建 GitHub Release 页面
+```
+
+- `lib/` 构建产物随提交进入 git，GitHub 安装（`github:...#<tag>`）直接可用，无需
+  在发布机上额外构建；**每次发版前务必重新 `pnpm build` 并提交 `lib/`**。
+- tag 名即安装时 `#` 后面的版本号，`#master` 始终跟随最新提交。
 
 ## 目录结构
 
