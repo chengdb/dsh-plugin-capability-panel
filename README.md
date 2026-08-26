@@ -134,8 +134,9 @@ src/
 
 ```powershell
 cd <本仓库路径>
-pnpm install   # dsh-mcp-client 以 link: 指向 dsh 部署内的副本，无需网络
+pnpm install   # 依赖全部从公共 registry 解析（含 @deepseek-ai/dsh-mcp-client，与宿主同版本范围）
 pnpm build     # tsc（lib/*.js + .d.ts）→ tsdown（lib/client.js 包裹版，最后跑）
+# 本地开发：直接 link 本仓库；发布后：dsh plugin --profile web add @chengdb/capability-panel
 dsh plugin --profile web add "link:<本仓库路径>"
 dsh web
 ```

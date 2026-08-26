@@ -37,15 +37,14 @@
   "dependencies": {
     "yaml": "^2.4.2",
     "@deepseek-ai/dsh-home-paths": "^0.1.0-rc.7",
-    "@deepseek-ai/dsh-mcp-client": "link:C:/Users/fengy/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-mcp-client"
+    "@deepseek-ai/dsh-mcp-client": "^0.1.0-rc.7"
   },
   "scripts": {
     "build": "pnpm run host && pnpm run bundle",
     "host": "tsc -p tsconfig.json",
     "bundle": "tsdown",
     "watch": "tsc -p tsconfig.json --watch",
-    "typecheck": "tsc --noEmit",
-    "prepack": "pnpm build"
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
