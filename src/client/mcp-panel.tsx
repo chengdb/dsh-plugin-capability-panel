@@ -393,7 +393,10 @@ function McpForm({
   const [saving, setSaving] = useState(false);
 
   const isNew = mode === "new";
-  const noWorkspace = workspace === undefined; // 没有工作区时不能创建项目级条目
+  // 没有工作区时不能创建项目级条目：workspace 是面板传入的展示标签
+  // （workspaceLabel() 恒为字符串，无工作区时为 "（无工作区）"），所以
+  // 不能只判 undefined，需与 skills 视图(panel.tsx)同一口径。
+  const noWorkspace = workspace === undefined || workspace === "（无工作区）";
 
   /** 客户端前置校验（与宿主的 validateEntry 保持同口径，快速反馈）。 */
   const submit = async () => {
@@ -715,9 +718,11 @@ function McpJsonImport({
   onClose(): void;
   onMutated(): void;
 }) {
-  const noWorkspace = workspace === undefined;
+  // 没有工作区时不能创建项目级条目：workspace 是展示标签，无工作区时为
+  // "（无工作区）" 字符串，不能只判 undefined（见 quick-messages-panel 同款修正）。
+  const noWorkspace = workspace === undefined || workspace === "（无工作区）";
   const [text, setText] = useState("");
-  const [scope, setScope] = useState<McpScope>(workspace !== undefined ? "project" : "global");
+  const [scope, setScope] = useState<McpScope>(noWorkspace ? "global" : "project");
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [opErrors, setOpErrors] = useState<string[]>([]);

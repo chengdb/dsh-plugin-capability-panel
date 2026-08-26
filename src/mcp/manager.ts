@@ -9,6 +9,7 @@
  */
 
 import { findProjectRoot } from "../shared/project-root.js";
+import { withFileLock } from "../shared/file-lock.js";
 import { readMcpFile, sanitizeServerName, summarizeEntry, transportOf, validateEntry, writeMcpFile } from "./config-file.js";
 import { globalMcpFile, projectMcpFile } from "./paths.js";
 import type { McpListResult, McpScope, McpServerEntry, McpServerView, McpStatusView } from "./types.js";
@@ -99,15 +100,18 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
     return { servers: views, errors };
   }
 
-  /** 新增或整体覆盖一条 server（校验失败不落盘），成功后重挂。 */
+  /** 新增或整体覆盖一条 server（校验失败不落盘），成功后重挂。
+   *  读→改→写 段按文件串行化，避免并发写者互相覆盖（见 shared/file-lock.ts）。 */
   async function upsert(input: McpUpsertInput): Promise<McpOpResult> {
     const errors = validateEntry(input.key, input.entry);
     if (errors.length > 0) return { ok: false, errors };
     try {
       const file = fileFor(input.scope, input.cwd);
-      const servers = await readMcpFile(file);
-      servers[input.key] = input.entry;
-      await writeMcpFile(file, servers);
+      await withFileLock(file, async () => {
+        const servers = await readMcpFile(file);
+        servers[input.key] = input.entry;
+        await writeMcpFile(file, servers);
+      });
       await reloadFor(input.scope, input.cwd);
       return { ok: true };
     } catch (error) {
@@ -119,10 +123,18 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
   async function remove(input: McpWriteInput): Promise<McpOpResult> {
     try {
       const file = fileFor(input.scope, input.cwd);
-      const servers = await readMcpFile(file);
-      if (servers[input.key] === undefined) return { ok: false, errors: [`no MCP server named "${input.key}" in ${file}`] };
-      delete servers[input.key];
-      await writeMcpFile(file, servers);
+      const result = await withFileLock<McpOpResult>(file, async () => {
+        const servers = await readMcpFile(file);
+        // 用 Object.hasOwn 判存在：普通属性查找会把 `__proto__` 等原型链上
+        // 的对象误判为"已存在"。
+        if (!Object.hasOwn(servers, input.key)) {
+          return { ok: false, errors: [`no MCP server named "${input.key}" in ${file}`] };
+        }
+        delete servers[input.key];
+        await writeMcpFile(file, servers);
+        return { ok: true };
+      });
+      if (!result.ok) return result;
       await reloadFor(input.scope, input.cwd);
       return { ok: true };
     } catch (error) {
@@ -134,15 +146,21 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
   async function setEnabled(input: McpWriteInput & { enabled: boolean }): Promise<McpOpResult> {
     try {
       const file = fileFor(input.scope, input.cwd);
-      const servers = await readMcpFile(file);
-      const entry = servers[input.key];
-      if (entry === undefined) return { ok: false, errors: [`no MCP server named "${input.key}" in ${file}`] };
-      if (input.enabled) {
-        delete entry.disabled;
-      } else {
-        entry.disabled = true;
-      }
-      await writeMcpFile(file, servers);
+      const result = await withFileLock<McpOpResult>(file, async () => {
+        const servers = await readMcpFile(file);
+        const entry = Object.hasOwn(servers, input.key) ? servers[input.key] : undefined;
+        if (entry === undefined) {
+          return { ok: false, errors: [`no MCP server named "${input.key}" in ${file}`] };
+        }
+        if (input.enabled) {
+          delete entry.disabled;
+        } else {
+          entry.disabled = true;
+        }
+        await writeMcpFile(file, servers);
+        return { ok: true };
+      });
+      if (!result.ok) return result;
       await reloadFor(input.scope, input.cwd);
       return { ok: true };
     } catch (error) {

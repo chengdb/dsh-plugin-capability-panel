@@ -35,10 +35,10 @@ export async function readMcpFile(filePath: string): Promise<Record<string, McpS
   try {
     text = await readFile(filePath, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyMap();
     throw error;
   }
-  if (text.trim().length === 0) return {};
+  if (text.trim().length === 0) return emptyMap();
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -49,11 +49,15 @@ export async function readMcpFile(filePath: string): Promise<Record<string, McpS
     throw new Error(`invalid MCP config in ${filePath}: top level must be an object`);
   }
   const servers = (parsed as { mcpServers?: unknown }).mcpServers;
-  if (servers === undefined) return {};
+  if (servers === undefined) return emptyMap();
   if (servers === null || typeof servers !== "object" || Array.isArray(servers)) {
     throw new Error(`invalid MCP config in ${filePath}: "mcpServers" must be an object`);
   }
-  const out: Record<string, McpServerEntry> = {};
+  // 用 null-prototype map：键名（server key）来自用户输入，可能含 `__proto__`
+  // 等；普通对象上 `map[key] = ...` 会触发原型 setter 或把条目丢进原型链，
+  // 导致条目丢失甚至污染全局 Object.prototype。无原型 map 上一切键都是普通
+  // 自有属性。
+  const out: Record<string, McpServerEntry> = emptyMap();
   for (const [key, value] of Object.entries(servers)) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
       throw new Error(`invalid MCP config in ${filePath}: entry "${key}" must be an object`);
@@ -63,14 +67,20 @@ export async function readMcpFile(filePath: string): Promise<Record<string, McpS
   return out;
 }
 
+/** 构造一个无原型的空条目 map（键名可含 `__proto__` 等，见 readMcpFile 注释）。 */
+function emptyMap(): Record<string, McpServerEntry> {
+  return Object.create(null) as Record<string, McpServerEntry>;
+}
+
 /**
  * 原子写入一个 MCP 配置文件（自动创建父目录）。
- * 用带时间戳的临时文件 + rename 覆盖，避免写一半留下损坏的 JSON。
+ * 用带时间戳与随机后缀的临时文件 + rename 覆盖，避免写一半留下损坏的 JSON，
+ * 也避免同一进程同一毫秒的两个写者撞上同一个临时文件名。
  */
 export async function writeMcpFile(filePath: string, servers: Record<string, McpServerEntry>): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   const body = `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`;
-  const tmp = join(dirname(filePath), `.mcp-${process.pid}-${Date.now()}.tmp`);
+  const tmp = join(dirname(filePath), `.mcp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
   await writeFile(tmp, body, "utf8");
   await rename(tmp, filePath);
 }
