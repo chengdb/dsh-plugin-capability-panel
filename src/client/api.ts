@@ -109,6 +109,12 @@ export interface SkillsApi {
   create(input: CreateSkillInput): Promise<OpResult>;
   update(input: { scope: WritableScope; target?: ".dsh" | ".agents"; name: string; spec: SkillSpec; body: string }): Promise<OpResult>;
   remove(input: SkillRef): Promise<OpResult>;
+  /**
+   * 一键启用/禁用 skill：禁用 = 用户与模型都不可调用（frontmatter 写入
+   * `user-invocable: false` 与 `disable-model-invocation: true`）；启用 =
+   * 清除两个键恢复缺省双启用。正文与其它元数据原样保留。
+   */
+  setEnabled(input: SkillRef & { enabled: boolean }): Promise<OpResult>;
   /** 浏览器上传安装（单 .md / 含 SKILL.md 的目录文件清单 / zip 解压清单）。 */
   installUpload(input: InstallUploadInput): Promise<InstallResult>;
   /** 从宿主磁盘路径安装（skill 目录或 .md 文件）。 */

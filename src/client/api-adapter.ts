@@ -45,10 +45,30 @@ export interface AdapterDeps {
 
 /** 构建传输无关的面板 API（RPC 实现）。 */
 export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
-  /** 调用一次宿主 RPC，并校验返回的是合法的信封形状。 */
+  /** 调用一次宿主 RPC，并把响应归一成与旧信封同构的 RawResult。 */
   async function rpc(endpoint: string, payload: unknown, signal?: AbortSignal): Promise<RawResult> {
     const raw = await deps.rpc.call(CHANNEL, endpoint, payload, signal);
-    if (raw && typeof raw === "object" && "ok" in raw) return raw as RawResult;
+    if (raw && typeof raw === "object" && "ok" in raw) {
+      const record = raw as Record<string, unknown>;
+      // 宿主把业务失败包成 { ok: true, value: { ok: false, errors } }
+      // （传输信封恒为 ok:true，见 remote.ts 的说明）。这里重新曝光为
+      // { ok: false, errors }，让所有调用点的旧逻辑（!result.ok → 报错）
+      // 保持不变。
+      if (record.ok === true && record.value !== null && typeof record.value === "object") {
+        const inner = record.value as Record<string, unknown>;
+        if (inner.ok === false && Array.isArray(inner.errors)) {
+          return { ok: false, errors: inner.errors as string[] };
+        }
+        return raw as RawResult;
+      }
+      // ok === false：兼容旧宿主把失败直出在传输信封上的情况。
+      return {
+        ok: false,
+        errors: Array.isArray(record.errors)
+          ? (record.errors as string[])
+          : [typeof record.message === "string" ? record.message : "操作失败"],
+      };
+    }
     return { ok: false, errors: [`unexpected response from ${CHANNEL}`] };
   }
 
@@ -98,6 +118,12 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
       async remove(input) {
         const cwd = deps.currentWorkspaceCwd();
         return unwrap(await rpc("skills.remove", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
+      },
+
+      /** 一键启用/禁用：与服务端同名词条一致，直接返回信封。 */
+      async setEnabled(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("skills.setEnabled", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
       },
 
       /** 上传安装：解开信封后投影成 InstallResult。 */

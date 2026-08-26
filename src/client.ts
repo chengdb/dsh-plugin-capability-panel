@@ -13,9 +13,12 @@
  * @module @chengdb/capability-panel/client
  */
 
+import { createElement } from "react";
 import { createPanelApi } from "./client/api-adapter.js";
 import { installStyles } from "./client/styles.js";
 import { CapabilitiesFooterAction } from "./client/panel.js";
+import { ComposerMcpButton, ComposerMcpOverlay } from "./client/composer-mcp.js";
+import { ComposerSkillsButton, ComposerSkillsOverlay } from "./client/composer-skills.js";
 
 /** locale 字典的命名空间。 */
 const NS = "capabilityPanel";
@@ -135,6 +138,47 @@ export function apply(ctx: any) {
       ),
     );
     if (typeof dispose === "function") disposers.push(dispose);
+  }
+
+  // 输入框工具行的能力工具组：Skills 快捷输入（见 composer-skills.tsx）与
+  // MCP 快捷开关（见 composer-mcp.tsx）两个按钮合并在同一个
+  // `conversation.input.left` 条目里（圆角容器 + 2px 间距，视觉上是一个
+  // 按钮组）。按钮从 owner props（InputZone）读 input 草稿快照；两个弹层仍
+  // 分别注册在 `conversation.input.overlay`，开合状态各自独立、外部点击
+  // 互斥关闭。Skills 弹层从 session 标准套件读 useInput / inputActions，
+  // 点击某行把 `/name ` 追加进草稿（宿主 ui-skill '/' 源的同款口令形式）。
+  if (ctx.slots?.inject && ctx.slots.register) {
+    const disposeTools = ctx.slots.inject("conversation.input.left", () =>
+      ctx.slots.register({ name: "conversation.input.left", id: "capability-panel-tools", order: 10, label: "能力工具" }, (props: any) =>
+        createElement(
+          "div",
+          { className: "skp-composer-tools" },
+          ComposerSkillsButton({ api, draft: typeof props?.input?.draft === "string" ? props.input.draft : "" }),
+          ComposerMcpButton({ api }),
+        ),
+      ),
+    );
+    if (typeof disposeTools === "function") disposers.push(disposeTools);
+    const disposeSkillsOverlay = ctx.slots.inject("conversation.input.overlay", () =>
+      ctx.slots.register({ name: "conversation.input.overlay", id: "capability-panel-skills", order: 5, label: "Skills" }, (props: any) =>
+        ComposerSkillsOverlay({
+          api,
+          useInput: typeof props?.useInput === "function" ? props.useInput : undefined,
+          inputActions: typeof props?.inputActions?.setDraft === "function" ? props.inputActions : undefined,
+        }),
+      ),
+    );
+    if (typeof disposeSkillsOverlay === "function") disposers.push(disposeSkillsOverlay);
+
+    // MCP 快捷开关的弹层（按钮已并入上方"能力工具"组条目）：同样注册在
+    // `conversation.input.overlay`。开合状态由 composer-mcp 模块内的微存储
+    // 跨两棵 React 树共享。
+    const disposeOverlay = ctx.slots.inject("conversation.input.overlay", () =>
+      ctx.slots.register({ name: "conversation.input.overlay", id: "capability-panel-mcp", order: 10, label: "MCP 服务器" }, () =>
+        ComposerMcpOverlay({ api }),
+      ),
+    );
+    if (typeof disposeOverlay === "function") disposers.push(disposeOverlay);
   }
 
   ctx.effect?.(() => () => {

@@ -278,15 +278,23 @@ function McpDetail({
 }) {
   return (
     <div className="skp-detail-card">
-      {/* 头部：标题 + 操作按钮（编辑 / 启停 / 删除，删除走幽灵红样式）。 */}
+      {/* 头部：标题 + 操作按钮（启用/禁用开关 / 编辑 / 删除，删除走幽灵红样式）。 */}
       <div className="skp-detail-head">
         <h3>{server.key}</h3>
         <div className="skp-detail-actions">
+          {/* 启用/禁用开关（与 Skills 详情卡同一 skp-switch 控件族）。 */}
+          <span className="skp-detail-enable">
+            <label
+              className="skp-switch"
+              title={server.enabled ? "点击禁用（保留在配置文件中，不挂载）" : "点击启用（写入配置文件并挂载）"}
+            >
+              <input type="checkbox" checked={server.enabled} onChange={onToggle} />
+              <span className="skp-switch-track" />
+            </label>
+            <span className="skp-detail-enable-label">{server.enabled ? "已启用" : "已禁用"}</span>
+          </span>
           <button type="button" className="skp-btn" onClick={onEdit}>
             编辑
-          </button>
-          <button type="button" className="skp-btn" onClick={onToggle}>
-            {server.enabled ? "禁用" : "启用"}
           </button>
           {/* 二次确认：confirming 时按钮变红并显示确认文案。 */}
           <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>

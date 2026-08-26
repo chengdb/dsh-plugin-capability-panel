@@ -28,6 +28,19 @@ dsh 插件：在 Web GUI 右侧面板中浏览并管理**项目级**与**全局�
   store-only zip）或复制到宿主指定目录（可选覆盖）。
 - **移除**（0.3.0 新增）：详情卡片两击确认删除（与 MCP 视图 Delete 同一交互），
   directory 布局连资源目录一起删。只读条目（custom / bundled）不显示操作。
+- **一键启用/禁用**（0.6.0 新增）：详情卡片新增「已启用/已禁用」开关——
+  禁用写入 `user-invocable: false` + `disable-model-invocation: true`
+  （用户 `/skill` 手势与模型 `skill` 工具都不可调用），启用清除两个键恢复
+  缺省双启用；正文与其它元数据原样保留，禁用的 skill 也会从输入框
+  Skills 快捷弹层中消失。只读条目不显示开关。
+- **输入框快捷输入**（0.5.0 新增）：`conversation.input.left` 槽注册「能力
+  工具」按钮组（Skills 闪电钮 + MCP 锤子钮并列于同一圆角容器）。Skills
+  按钮在草稿含已知 `/skill` 口令时实心变绿；点击在
+  `conversation.input.overlay` 锚点展开弹层——按 当前项目/全局 分组列出
+  user-invocable 的 skill（可搜索），点击某行把 `/name ` 追加进当前会话草稿
+  （与宿主 ui-skill 的 `/` 菜单同一口令形式：草稿内口令被渲染成 chip，发送后
+  宿主识别并注入 skill 正文）。草稿读写走 session 标准套件的
+  `useInput` / `inputActions`；Esc/点击外部关闭，与 MCP 弹层互斥。
 
 ### MCP（0.2.0 新增）
 
@@ -41,6 +54,10 @@ dsh 插件：在 Web GUI 右侧面板中浏览并管理**项目级**与**全局�
   `mcp__<serverName>__<tool>` 出现在**该 session 内**，不改 preset、不重启。
 - **面板管理**：列表（作用域/传输/启用状态/挂载状态圆点）、新增、编辑、删除、
   启用/禁用切换；每次写操作后自动重挂受影响 session 的 MCP 连接。
+- **输入框快捷开关**（0.4.0 新增）：`conversation.input.left` 槽注册「MCP」
+  按钮（带已启用数量徽标），点击在 `conversation.input.overlay` 锚点展开
+  弹层——按 当前项目/全局 分组列出 server，逐行开关直接启用/禁用（写
+  配置文件 + 自动重挂，与面板同一语义），Esc/点击遮罩关闭。
 - 已知限制：`dsh-mcp-client` 的 `serverName` 预留是**进程级**的，两个同项目
   session 同时存活时第二个挂载同名 server 会报 `conflict`（状态圆点黄色），
   不影响先挂载的 session。
@@ -77,6 +94,8 @@ src/
     api-adapter.ts RPC 适配器
     panel.tsx      面板根组件（域 Tab）+ Skills 视图（安装对话框 / 导出 / 移除）
     mcp-panel.tsx  MCP 视图（列表/详情/表单/状态圆点）
+    composer-mcp.tsx 输入框工具行的 MCP 快捷开关（按钮 + 弹层）
+    composer-skills.tsx 输入框工具行的 Skills 快捷输入（按钮 + 弹层）
     zip.ts         store-only ZIP 打包 + base64/下载工具（skill 导出下载用）
     unzip.ts       浏览器端 ZIP 读取（DecompressionStream，压缩包上传用）
     scope-tabs.ts  两域共用的 All/Project/Global 作用域 Tab 模型

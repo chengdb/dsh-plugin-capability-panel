@@ -276,7 +276,20 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                   className={selected === skillRowKey(item) ? "skp-row skp-row-active" : "skp-row"}
                   onClick={() => setSelected(skillRowKey(item))}
                 >
-                  <span className="skp-row-name">{item.name}</span>
+                  <span className="skp-row-name">
+                    {/* 启用状态圆点（与 MCP 面板同一控件族）：启用绿 / 禁用灰。 */}
+                    <span
+                      className={`skp-dot ${isSkillEnabled(item) ? "skp-dot-enabled" : ""}`}
+                      title={
+                        item.readOnly
+                          ? "只读条目"
+                          : isSkillEnabled(item)
+                            ? "已启用（模型与用户均可调用）"
+                            : "已禁用（用户与模型都不可调用）"
+                      }
+                    />
+                    {item.name}
+                  </span>
                   <span className="skp-row-meta">
                     {/* 来源标签：project 系 vs 其余一律归为 global。 */}
                     <span className={isProjectSource(item.source) ? "skp-tag skp-tag-project" : "skp-tag skp-tag-global"}>
@@ -290,6 +303,8 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                         {item.format === "directory" ? "目录" : "单文件"}
                       </span>
                     )}
+                    {/* 禁用的可写条目再标一个"已禁用"标签（与 MCP 行一致）。 */}
+                    {!item.readOnly && !isSkillEnabled(item) && <span className="skp-tag skp-tag-readonly">已禁用</span>}
                   </span>
                   <span className="skp-row-desc">{item.description}</span>
                 </button>
@@ -303,7 +318,10 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                 key={skillRowKey(selectedItem)}
                 summary={selectedItem}
                 api={api}
-                onChanged={() => {
+                // 启用/禁用：skill 仍存在，保留选中并重拉列表（详情随新摘要刷新）。
+                onChanged={() => reload()}
+                // 移除：条目已不存在，清空选中再重拉。
+                onRemoved={() => {
                   setSelected(undefined);
                   reload();
                 }}
@@ -335,6 +353,11 @@ function isProjectSource(source: string): boolean {
   return source === "project-dsh" || source === "project-agents" || source === "custom";
 }
 
+/** 整体启用态 = 模型与用户两种调用都开着（与详情卡开关同一口径）。 */
+function isSkillEnabled(item: Pick<ClientSkillSummary, "modelInvocable" | "userInvocable">): boolean {
+  return item.modelInvocable && item.userInvocable;
+}
+
 /**
  * React 行 key 与选中项标识。
  *
@@ -347,17 +370,51 @@ function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string 
 }
 
 /**
- * 详情卡片：元信息 + 路径 + 写操作（导出下载 / 导出到宿主路径 / 移除）。
- * 只读条目（custom / bundled）只展示徽标，不提供操作。
+ * 详情卡片：元信息 + 路径 + 写操作（启用/禁用开关、导出下载、
+ * 导出到宿主路径、移除）。只读条目（custom / bundled）只展示徽标，不提供操作。
  *
  * 组件以 `key={source:name}` 挂载（见 SkillsView），切换选中行即整体重挂，
  * 因此确认态/错误态不需要手动随行切换重置。
  */
-function SkillDetail({ summary, api, onChanged }: { summary: ClientSkillSummary; api: SkillsApi; onChanged: () => void }) {
+function SkillDetail({
+  summary,
+  api,
+  onChanged,
+  onRemoved,
+}: {
+  summary: ClientSkillSummary;
+  api: SkillsApi;
+  /** 条目内容已变化（如启用/禁用）：保留选中，重拉列表即可。 */
+  onChanged: () => void;
+  /** 条目已删除：应清空选中。 */
+  onRemoved: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [opError, setOpError] = useState<string | undefined>(undefined);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [exportPathOpen, setExportPathOpen] = useState(false);
+
+  /**
+   * 一键启用/禁用：开关状态 = 模型与用户都可用（两者任一被关即视为禁用）。
+   * 操作落盘成功后重拉列表（项目根/全局根读盘）；保留选中，详情随新摘要
+   * 刷新（开关、调用方式行都会更新）。
+   */
+  const doSetEnabled = async (next: boolean) => {
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await api.setEnabled({ ...skillRef(summary), enabled: next });
+      if (!result.ok) {
+        setOpError(result.errors.join("; "));
+        return;
+      }
+      onChanged();
+    } catch (error) {
+      setOpError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /** 导出为浏览器下载：flat ⇒ 单个 .md；directory ⇒ 打 zip（store-only）。 */
   const doExportDownload = async () => {
@@ -397,7 +454,7 @@ function SkillDetail({ summary, api, onChanged }: { summary: ClientSkillSummary;
         setConfirmRemove(false);
         return;
       }
-      onChanged();
+      onRemoved();
     } catch (error) {
       setOpError(String(error));
       setConfirmRemove(false);
@@ -405,6 +462,9 @@ function SkillDetail({ summary, api, onChanged }: { summary: ClientSkillSummary;
       setBusy(false);
     }
   };
+
+  /** 整体启用态 = 模型与用户两种调用都开着（任一被关即视为已禁用）。 */
+  const enabled = summary.modelInvocable && summary.userInvocable;
 
   return (
     <div className="skp-detail-card">
@@ -415,6 +475,14 @@ function SkillDetail({ summary, api, onChanged }: { summary: ClientSkillSummary;
           <span className="skp-badge">只读</span>
         ) : (
           <div className="skp-detail-actions">
+            {/* 一键启用/禁用开关（与弹层快捷开关同一 skp-switch 控件族）。 */}
+            <span className="skp-detail-enable">
+              <label className="skp-switch" title={enabled ? "点击禁用（用户与模型都不可调用）" : "点击启用（恢复用户与模型调用）"}>
+                <input type="checkbox" checked={enabled} disabled={busy} onChange={(e) => void doSetEnabled(e.currentTarget.checked)} />
+                <span className="skp-switch-track" />
+              </label>
+              <span className="skp-detail-enable-label">{enabled ? "已启用" : "已禁用"}</span>
+            </span>
             <button type="button" className="skp-btn" disabled={busy} onClick={doExportDownload}>
               导出
             </button>

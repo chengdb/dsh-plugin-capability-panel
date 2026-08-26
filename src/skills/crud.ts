@@ -103,6 +103,38 @@ export async function removeSkill(root: string, name: string): Promise<{ ok: boo
   return { ok: true };
 }
 
+/** 设置 skill 启用状态的入参。 */
+export interface SetEnabledOptions {
+  root: string;
+  name: string;
+  /**
+   * true = 完全启用；false = 完全禁用。
+   *
+   * DSH 没有单一的"启用键"，调用策略由 frontmatter 的两个扁平布尔表达
+   * （`disable-model-invocation` / `user-invocable`）。本操作把它们作为
+   * 一个整体：禁用 ⇒ 用户与模型都不可调用；启用 ⇒ 两个键都清除
+   * （frontmatter 缺省即双启用，写盘保持最小化，不输出多余的 true/false）。
+   */
+  enabled: boolean;
+}
+
+/**
+ * 一键启用/禁用 skill：读取原文件，整体覆盖调用策略后写回，正文与其它
+ * 元数据（whenToUse / metadata 等）原样保留。
+ */
+export async function setSkillEnabled(options: SetEnabledOptions): Promise<{ ok: boolean; errors?: string[] }> {
+  const format = await detectFormat(options.root, options.name);
+  if (format === undefined) return { ok: false, errors: [`skill "${options.name}" not found`] };
+  const parsed = await readSkill(options.root, options.name, format);
+  if (parsed === undefined) return { ok: false, errors: [`skill "${options.name}" could not be parsed`] };
+  const spec: SkillSpec = {
+    ...parsed.spec,
+    invocation: options.enabled ? {} : { "disable-model-invocation": true, "user-invocable": false },
+  };
+  await writeSkill(options.root, options.name, format, spec, parsed.body);
+  return { ok: true };
+}
+
 /** 读取详情的结果。 */
 export interface ReadResult {
   ok: boolean;

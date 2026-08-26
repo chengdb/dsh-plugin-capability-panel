@@ -15,7 +15,7 @@
 import { findProjectRoot } from "../shared/project-root.js";
 import { globalSkillsDir, projectSkillsDir, userAgentsSkillsDir } from "./roots.js";
 import { readSkill, resourceDirectory, skillFilePath } from "./disk.js";
-import { createSkill, updateSkill, removeSkill, readSkillDetail, listSkillEntries } from "./crud.js";
+import { createSkill, updateSkill, removeSkill, setSkillEnabled, readSkillDetail, listSkillEntries } from "./crud.js";
 import { installFromUrl } from "./download.js";
 import { exportSkillFiles, exportToPath, installFromFiles, installFromPath } from "./transfer.js";
 import type { TransferFile } from "./transfer.js";
@@ -137,6 +137,11 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
     async remove(input: { root?: string; scope?: WritableScope; target?: ".dsh" | ".agents"; cwd?: string; name: string }) {
       const root = input.root ?? resolveRoot(input.scope ?? "global", input.cwd, input.target);
       return removeSkill(root, input.name);
+    },
+    /** 一键启用/禁用 skill（scope 缺省按 global 解析根）。 */
+    async setEnabled(input: { root?: string; scope?: WritableScope; target?: ".dsh" | ".agents"; cwd?: string; name: string; enabled: boolean }) {
+      const root = input.root ?? resolveRoot(input.scope ?? "global", input.cwd, input.target);
+      return setSkillEnabled({ root, name: input.name, enabled: input.enabled });
     },
     /** 读取 skill 详情（scope 缺省按 global 解析根）。 */
     async read(input: { root?: string; scope?: WritableScope; target?: ".dsh" | ".agents"; cwd?: string; name: string }) {

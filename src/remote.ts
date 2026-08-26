@@ -20,10 +20,29 @@ import { CHANNEL } from "./channel.js";
 
 export { CHANNEL };
 
-/** RPC 通道的结果信封：成功携带 value，失败携带错误信息列表。 */
-export type RpcResult =
-  | { ok: true; value: unknown }
-  | { ok: false; errors: string[] };
+/**
+ * RPC 通道的业务信封。
+ *
+ * 注意：传输层**恒为 `{ ok: true }`**。连接通道（dsh-client-connection）对
+ * 每个服务器响应做 zod 校验，`result` 必须是
+ * `{ ok: true, value } | { ok: false, error: RpcError }` 二选一，其中
+ * RpcError 是带特定业务 code（bad-request / session-not-found / …）的
+ * 判别联合——插件的通用失败（未知 endpoint、handler 抛错、业务失败）
+ * 不属于这些 code，直接返回 `{ ok: false, errors }` 会被客户端当成非法
+ * 响应抛 zod invalid_union。因此失败一律包成**业务信封**：
+ * `{ ok: true, value: { ok: false, errors: [...] } }`（value 是
+ * unknown，恒能过通道校验），由客户端适配器（api-adapter）归一成
+ * 与旧信封同构的 RawResult，业务 ok 以 value 里的为准。
+ */
+export type RpcResult = { ok: true; value: unknown };
+
+/** 业务失败信封（挂在 RpcResult.value 上，与客户端 RawResult 同构）。 */
+export type BusinessFailure = { ok: false; errors: string[] };
+
+/** 构造一个始终通过通道校验的业务失败响应。 */
+function failure(errors: readonly string[]): RpcResult {
+  return { ok: true, value: { ok: false, errors: [...errors] } };
+}
 
 /** 被路由的服务形状（两个域的方法签名）。 */
 export interface PanelRpcService {
@@ -33,6 +52,7 @@ export interface PanelRpcService {
     create(input: unknown): Promise<unknown>;
     update(input: unknown): Promise<unknown>;
     remove(input: unknown): Promise<unknown>;
+    setEnabled(input: unknown): Promise<unknown>;
     install(input: unknown): Promise<unknown>;
     export(input: unknown): Promise<unknown>;
   };
@@ -49,7 +69,8 @@ export interface PanelRpcService {
  * 把 `(endpoint, payload)` 路由到服务并规范化结果。
  *
  * 从 payload 里解析可选的 `cwd`（skills.list / mcp.list / mcp.status 用它
- * 限定项目作用域）；未知 endpoint 或服务抛错都归一成 `{ ok: false }`。
+ * 限定项目作用域）；未知 endpoint 或服务抛错都归一成业务失败信封
+ * `{ ok: true, value: { ok: false, errors } }`（见 {@link failure}）。
  */
 export async function handleEndpoint(service: PanelRpcService, endpoint: string, payload: unknown, _signal?: AbortSignal): Promise<RpcResult> {
   const p = (payload ?? {}) as Record<string, unknown>;
@@ -66,6 +87,8 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.skills.update(p) };
       case "skills.remove":
         return { ok: true, value: await service.skills.remove(p) };
+      case "skills.setEnabled":
+        return { ok: true, value: await service.skills.setEnabled(p) };
       case "skills.install":
         return { ok: true, value: await service.skills.install(p) };
       case "skills.export":
@@ -81,10 +104,10 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
       case "mcp.status":
         return { ok: true, value: service.mcp.status(cwd) };
       default:
-        return { ok: false, errors: [`unknown endpoint "${endpoint}"`] };
+        return failure([`unknown endpoint "${endpoint}"`]);
     }
   } catch (error) {
-    return { ok: false, errors: [error instanceof Error ? error.message : String(error)] };
+    return failure([error instanceof Error ? error.message : String(error)]);
   }
 }
 
