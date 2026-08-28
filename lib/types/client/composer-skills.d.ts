@@ -18,12 +18,17 @@
  * `agent/pre-step` 监听用 SKILL_GESTURE（`(^|\s)/name(?=\s|$)`）识别用户
  * 消息里的口令并注入 skill 正文（skill-invocation 上下文消息）。因此这里
  * 只需写草稿文本，不需要也不应该伪造 chip/occurrence 状态。
+ * 行右侧还有一个 hover / 键盘聚焦时浮现的小按钮（与宿主主发送键同款向上
+ * 箭头图标，28×28 方形圆角）：一键把 `/name ` 作为完整内容直接发送——先
+ * `setDraft` 覆盖草稿、再 `submit()` 进入宿主提交流水线，不再经过输入框
+ * 草稿（参照 composer-quick 的快捷消息行）。
  *
  * 草稿读写走 session 标准套件：`conversation.input.overlay` 是 session
  * 作用域槽，ui-conversation 的 provide 贡献（hooks: ["input"]、
  * props: ["inputActions"]）会把 `useInput` / `inputActions` 注入条目
- * props；写入只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
- * 写路径），读取用 `useInput((s) => s.draft)` 选择器订阅。
+ * props；追加草稿只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
+ * 写路径），直接发送在 `setDraft` 之后调 `inputActions.submit()`，读取用
+ * `useInput((s) => s.draft)` 选择器订阅。
  *
  * 两个入口是两棵独立的 React 树，开合状态与**列表数据**用模块级存储共享
  * （见 composer-common.ts）：弹层打开时拉取 skill 列表并写回存储的数据槽，
@@ -56,10 +61,13 @@ export declare function ComposerSkillsButton({ api, draft }: {
 /** session 标准套件注入的输入选择器钩子（ui-conversation provide 的 hooks: ["input"]）。 */
 type UseInputHook = <S>(sel: (s: {
     draft: string;
+    phase?: string;
 }) => S, eq?: (a: S, b: S) => boolean) => S;
 /** session 标准套件注入的输入动作面（ui-conversation provide 的 props: ["inputActions"]）。 */
 interface InputActionsFace {
     setDraft(text: string): void;
+    /** 提交当前草稿（进入宿主提交流水线）；行内"直接发送"按钮使用。 */
+    submit(): void;
 }
 /**
  * Skills 快捷输入弹层：按 当前项目/全局 分组列出 user-invocable 的 skill，

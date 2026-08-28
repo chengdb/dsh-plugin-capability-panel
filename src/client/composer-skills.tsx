@@ -18,12 +18,17 @@
  * `agent/pre-step` 监听用 SKILL_GESTURE（`(^|\s)/name(?=\s|$)`）识别用户
  * 消息里的口令并注入 skill 正文（skill-invocation 上下文消息）。因此这里
  * 只需写草稿文本，不需要也不应该伪造 chip/occurrence 状态。
+ * 行右侧还有一个 hover / 键盘聚焦时浮现的小按钮（与宿主主发送键同款向上
+ * 箭头图标，28×28 方形圆角）：一键把 `/name ` 作为完整内容直接发送——先
+ * `setDraft` 覆盖草稿、再 `submit()` 进入宿主提交流水线，不再经过输入框
+ * 草稿（参照 composer-quick 的快捷消息行）。
  *
  * 草稿读写走 session 标准套件：`conversation.input.overlay` 是 session
  * 作用域槽，ui-conversation 的 provide 贡献（hooks: ["input"]、
  * props: ["inputActions"]）会把 `useInput` / `inputActions` 注入条目
- * props；写入只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
- * 写路径），读取用 `useInput((s) => s.draft)` 选择器订阅。
+ * props；追加草稿只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
+ * 写路径），直接发送在 `setDraft` 之后调 `inputActions.submit()`，读取用
+ * `useInput((s) => s.draft)` 选择器订阅。
  *
  * 两个入口是两棵独立的 React 树，开合状态与**列表数据**用模块级存储共享
  * （见 composer-common.ts）：弹层打开时拉取 skill 列表并写回存储的数据槽，
@@ -117,6 +122,18 @@ function BoltIcon({ filled }: { filled: boolean }) {
   );
 }
 
+/** 发送（向上箭头）图标（16px）：与宿主主发送键同款路径（16×16 viewBox，纯填充）。 */
+const SEND_PATH =
+  "M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z";
+
+function SendIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+      <path d={SEND_PATH} fill="currentColor" />
+    </svg>
+  );
+}
+
 /**
  * 闪电图标按钮：点击开合弹层。草稿不含已知 `/skill` 口令时空心描边
  * （中性灰）；含已知口令时实心填充绿色（成功色，skp-composer-btn-active）。
@@ -183,11 +200,13 @@ export function ComposerSkillsButton({ api, draft }: { api: CapabilityPanelApi; 
 // ---------------------------------------------------------------------------
 
 /** session 标准套件注入的输入选择器钩子（ui-conversation provide 的 hooks: ["input"]）。 */
-type UseInputHook = <S>(sel: (s: { draft: string }) => S, eq?: (a: S, b: S) => boolean) => S;
+type UseInputHook = <S>(sel: (s: { draft: string; phase?: string }) => S, eq?: (a: S, b: S) => boolean) => S;
 
 /** session 标准套件注入的输入动作面（ui-conversation provide 的 props: ["inputActions"]）。 */
 interface InputActionsFace {
   setDraft(text: string): void;
+  /** 提交当前草稿（进入宿主提交流水线）；行内"直接发送"按钮使用。 */
+  submit(): void;
 }
 
 /**
@@ -290,7 +309,14 @@ function SkillsPop({
   // 订阅当前草稿（session 套件缺席时退化为空串，且插入动作同时被禁用，
   // 不会用空串覆盖真实草稿）。
   const draft = typeof useInput === "function" ? useInput((s) => (typeof s?.draft === "string" ? s.draft : "")) : "";
+  // 订阅输入机相位：adjudicating/submitting 期间宿主的 submit() 会被 onEnter
+  // 首行的相位守卫直接丢弃，而 setDraft 无相位守卫仍会覆盖草稿——此时"直接
+  // 发送"会让口令静默丢失（在途提交落地时 onSubmitSettled 再把草稿清空），
+  // 故忙时不渲染发送按钮（对照宿主主发送键的 machineBusy 禁用态）。
+  const phase = typeof useInput === "function" ? useInput((s) => (typeof s?.phase === "string" ? s.phase : "")) : "";
+  const machineBusy = phase === "adjudicating" || phase === "submitting";
   const canInsert = typeof inputActions?.setDraft === "function";
+  const canSend = canInsert && typeof inputActions?.submit === "function" && !machineBusy;
 
   /**
    * 从弹层自身向上找 composer 的 textarea：弹层锚点挂在 InputBar 子树内，
@@ -325,6 +351,14 @@ function SkillsPop({
     }
   };
 
+  /** 把 `/name ` 作为完整内容直接发送（先覆盖草稿、再提交进宿主提交流水线），并关闭弹层。 */
+  const onSend = (skill: ClientSkillSummary) => {
+    if (!canSend) return;
+    inputActions.setDraft(`/${skill.name} `);
+    setComposerSkillsOpen(false);
+    inputActions.submit();
+  };
+
   const keyword = query.trim().toLowerCase();
   const filtered =
     keyword.length === 0
@@ -335,19 +369,37 @@ function SkillsPop({
   const project = filtered.filter((s) => isProjectSource(s.source));
   const globalList = filtered.filter((s) => !isProjectSource(s.source));
 
-  const renderRow = (skill: ClientSkillSummary) => (
-    <button
-      key={skill.name}
-      type="button"
-      className="skp-composer-skill"
-      disabled={!canInsert}
-      title={canInsert ? `输入 /${skill.name}` : "当前会话不支持快速输入"}
-      onClick={() => onPick(skill)}
-    >
-      <span className="skp-composer-skill-name">{skill.name}</span>
-      <span className="skp-composer-skill-desc">{skill.description}</span>
-    </button>
-  );
+  const renderRow = (skill: ClientSkillSummary) => {
+    // 直接发送会整体覆盖当前草稿，且发送成功后宿主 commitSend 切断 undo
+    // 历史，被覆盖的草稿不可恢复——草稿非空时在提示文案里显式预警。
+    const sendLabel =
+      draft.trim() === "" ? `直接发送 /${skill.name}` : `覆盖当前草稿并直接发送 /${skill.name}`;
+    return (
+      <div key={skill.name} className="skp-composer-skill-row">
+        <button
+          type="button"
+          className="skp-composer-skill"
+          disabled={!canInsert}
+          title={canInsert ? `输入 /${skill.name}` : "当前会话不支持快速输入"}
+          onClick={() => onPick(skill)}
+        >
+          <span className="skp-composer-skill-name">{skill.name}</span>
+          <span className="skp-composer-skill-desc">{skill.description}</span>
+        </button>
+        {canSend && (
+          <button
+            type="button"
+            className="skp-composer-skill-send"
+            title={sendLabel}
+            aria-label={sendLabel}
+            onClick={() => onSend(skill)}
+          >
+            <SendIcon />
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     // 弹层右下角贴能力工具组右上角（上方间隔 4px）；无锚点时退化为锚点左上方位（CSS 类默认值）。
