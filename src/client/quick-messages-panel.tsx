@@ -10,12 +10,12 @@
  * @module @chengdb/capability-panel/client/quick-messages-panel
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ClientQuickMessage, OpResult, QuickMessagesApi } from "./api.js";
+import { useMemo, useState } from "react";
+import type { CapabilityPanelApi, ClientQuickMessage, OpResult, QuickMessagesApi } from "./api.js";
 import { validateQuickMessage } from "../quick-messages/entry-util.js";
 import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
-import { SCOPE_LABEL } from "./scope-tabs.js";
+import { hasWorkspaceLabel, ProjectOverrideButton, ScopeTabs, useAsyncList } from "./panel-common.js";
 import type { ScopeTab } from "./scope-tabs.js";
 
 /** 复合行 id：同名条目可能同时存在于 project 与 global 两个作用域。 */
@@ -25,11 +25,10 @@ function rowId(message: Pick<ClientQuickMessage, "scope" | "name">): string {
 
 /**
  * 快捷消息视图主组件：状态管理 + 拉取/重拉 + 列表 + 详情/表单。
+ * 全局条目在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可恢复）。
  */
-export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; workspace?: string }) {
-  const [messages, setMessages] = useState<ClientQuickMessage[]>([]);
-  const [listErrors, setListErrors] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+export function QuickMessagesPanel({ api, workspace }: { api: CapabilityPanelApi; workspace?: string }) {
+  const quickApi = api.quickMessages;
   const [opError, setOpError] = useState<string | undefined>(undefined);
   const [tab, setTab] = useState<ScopeTab>("all");
   const [query, setQuery] = useState("");
@@ -41,37 +40,10 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
   // 二次确认删除：记录"待确认的行 id"，再点一次才真正删除。
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined);
 
-  /** 请求序号：只让"最新一次"reload 的结果落地，防乱序旧响应覆盖新状态。 */
-  const reloadSeq = useRef(0);
-
-  /** 重新拉取列表（list 单接口，无挂载状态）。 */
-  const reload = () => {
-    const seq = ++reloadSeq.current;
-    let cancelled = false;
-    setLoading(true);
-    setOpError(undefined);
-    api
-      .list()
-      .then((list) => {
-        if (cancelled || seq !== reloadSeq.current) return;
-        setMessages(list.messages);
-        setListErrors(list.errors);
-      })
-      .catch((err) => {
-        if (cancelled || seq !== reloadSeq.current) return;
-        setOpError(String(err));
-      })
-      .finally(() => {
-        if (cancelled || seq !== reloadSeq.current) return;
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  };
-
-  // 挂载时与工作区变化时（项目文件路径依赖 cwd）重新拉取。
-  useEffect(reload, [api, workspace]);
+  /** 拉取合并列表（list 单接口，无挂载状态）；挂载/工作区变化自动执行，写操作后显式 reload()。 */
+  const { data, loading, error, reload } = useAsyncList(() => quickApi.list(), [quickApi, workspace]);
+  const messages = data?.messages ?? [];
+  const listErrors = data?.errors ?? [];
 
   // 过滤：作用域 Tab + 搜索词（命中名称或正文）。
   const visible = useMemo(() => {
@@ -99,7 +71,12 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
 
   /** 启用/禁用切换（直接写入配置文件）。 */
   const onToggle = (message: ClientQuickMessage) => {
-    void runOp(api.setEnabled({ scope: message.scope, name: message.name, enabled: !message.enabled }));
+    void runOp(quickApi.setEnabled({ scope: message.scope, name: message.name, enabled: !message.enabled }));
+  };
+
+  /** 切换全局消息在当前项目的禁用状态（写项目覆写文件，不动全局配置）。 */
+  const onToggleProjectDisabled = (message: ClientQuickMessage) => {
+    void runOp(api.overrides.toggle("quickMessages", message.name));
   };
 
   /** 删除：第一次点击进入确认态；同一行再次点击才真正删除并清空选中。 */
@@ -110,7 +87,7 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
       return;
     }
     setConfirmDelete(undefined);
-    void runOp(api.remove({ scope: message.scope, name: message.name })).then((ok) => {
+    void runOp(quickApi.remove({ scope: message.scope, name: message.name })).then((ok) => {
       if (ok) setSelected(undefined);
     });
   };
@@ -118,19 +95,7 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
   return (
     <div className="skp-domain">
       <div className="skp-subheader">
-        <div className="skp-tabs" role="tablist">
-          {(["all", "project", "global"] as ScopeTab[]).map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              className={tab === t ? "skp-tab skp-tab-active" : "skp-tab"}
-              onClick={() => setTab(t)}
-            >
-              {SCOPE_LABEL[t]}
-            </button>
-          ))}
-        </div>
+        <ScopeTabs value={tab} onChange={setTab} />
         <input
           className="skp-search"
           type="search"
@@ -154,6 +119,7 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
       {/* 非致命错误行：列表读取问题 / 写操作失败提示。 */}
       {listErrors.length > 0 && <div className="skp-error">{listErrors.join("\n")}</div>}
       {opError && <div className="skp-error">{opError}</div>}
+      {error && <div className="skp-error">{error}</div>}
       {loading && <div className="skp-status">加载中…</div>}
 
       {!loading && (
@@ -172,8 +138,19 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
                     }}
                   >
                     <span className="skp-row-name">
-                      {/* 启用状态圆点（与 MCP 面板同一控件族）：启用绿 / 禁用灰。 */}
-                      <span className={`skp-dot ${message.enabled ? "skp-dot-enabled" : ""}`} title={message.enabled ? "已启用" : "已禁用"} />
+                      {/* 状态圆点（与 MCP / Skills 同一控件族、同一语义）：
+                          全局已禁用恒灰；仅全局启用时区分本项目禁用（橙）/
+                          正常启用（绿）。 */}
+                      <span
+                        className={`skp-dot ${!message.enabled ? "" : message.disabledInProject === true ? "skp-dot-project-disabled" : "skp-dot-enabled"}`}
+                        title={
+                          !message.enabled
+                            ? "已禁用"
+                            : message.disabledInProject === true
+                              ? "本项目禁用（全局仍启用）"
+                              : "已启用"
+                        }
+                      />
                       {message.name}
                     </span>
                     <span className="skp-row-meta">
@@ -181,6 +158,8 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
                         {message.scope === "project" ? "项目" : "全局"}
                       </span>
                       {!message.enabled && <span className="skp-tag skp-tag-readonly">已禁用</span>}
+                      {/* 全局消息被当前项目在项目级声明禁用时的标记。 */}
+                      {message.disabledInProject === true && <span className="skp-tag skp-tag-project-disabled">本项目禁用</span>}
                     </span>
                     <span className="skp-row-desc">{message.text}</span>
                   </button>
@@ -198,6 +177,12 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
                 onEdit={() => setEditMessage(selectedMessage)}
                 onToggle={() => onToggle(selectedMessage)}
                 onDelete={() => onDelete(selectedMessage)}
+                projectDisabled={selectedMessage.disabledInProject === true}
+                onToggleProject={
+                  selectedMessage.scope === "global" && hasWorkspaceLabel(workspace)
+                    ? () => onToggleProjectDisabled(selectedMessage)
+                    : undefined
+                }
               />
             ) : (
               <div className="skp-detail-empty">选择一条快捷消息查看详情，或新增一条。</div>
@@ -209,7 +194,7 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
       {/* 新增弹窗（表单模式，与技能/MCP 弹窗同构）。 */}
       {addOpen && (
         <QuickMessageAddDialog
-          api={api}
+          api={quickApi}
           workspace={workspace}
           onClose={() => setAddOpen(false)}
           onMutated={() => reload()}
@@ -218,7 +203,7 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
       {/* 编辑弹窗：与新增同款外壳（Modal + 内嵌表单）。 */}
       {editMessage !== undefined && (
         <QuickMessageEditDialog
-          api={api}
+          api={quickApi}
           message={editMessage}
           onClose={() => setEditMessage(undefined)}
           onSaved={() => reload()}
@@ -232,43 +217,68 @@ export function QuickMessagesPanel({ api, workspace }: { api: QuickMessagesApi; 
 // 详情卡片
 // ---------------------------------------------------------------------------
 
-/** 详情卡片：只读展示条目字段 + 编辑/启停/删除操作。 */
+/** 详情卡片：只读展示条目字段 + 编辑/启停/删除操作。状态按钮的文字与颜色随
+ *  状态变化：全局消息有工作区时是两个按钮——「全局已启用/全局已禁用」管全局
+ *  配置，「项目已启用/项目已禁用」管项目级覆写（不动全局配置）。 */
 function QuickMessageDetail({
   message,
   confirming,
   onEdit,
   onToggle,
   onDelete,
+  projectDisabled,
+  onToggleProject,
 }: {
   message: ClientQuickMessage;
   confirming: boolean;
   onEdit(): void;
   onToggle(): void;
   onDelete(): void;
+  /** 该全局消息是否被当前项目在项目级声明禁用。 */
+  projectDisabled: boolean;
+  /** 切换"在本项目禁用"（无工作区或项目条目时为 undefined，不渲染该按钮）。 */
+  onToggleProject: (() => void) | undefined;
 }) {
+  const isGlobal = message.scope === "global";
   return (
     <div className="skp-detail-card">
-      {/* 头部：标题 + 操作按钮（启用/禁用开关 / 编辑 / 删除）。 */}
+      {/* 头部：标题；操作按钮单独占一行，置于标题之下。 */}
       <div className="skp-detail-head">
         <h3>{message.name}</h3>
-        <div className="skp-detail-actions">
-          <span className="skp-detail-enable">
-            <label
-              className="skp-switch"
-              title={message.enabled ? "点击禁用（保留在配置文件中，从快捷弹层隐藏）" : "点击启用（出现在输入框快捷弹层）"}
-            >
-              <input type="checkbox" checked={message.enabled} onChange={onToggle} />
-              <span className="skp-switch-track" />
-            </label>
-            <span className="skp-detail-enable-label">{message.enabled ? "已启用" : "已禁用"}</span>
-          </span>
-          <button type="button" className="skp-btn" onClick={onEdit}>
-            编辑
-          </button>
-          <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>
-            {confirming ? "确认删除？" : "删除"}
-          </button>
-        </div>
+      </div>
+      <div className="skp-detail-actions">
+        <button
+          type="button"
+          className={`skp-btn ${message.enabled ? "skp-state-on" : "skp-state-off"}`}
+          title={
+            isGlobal
+              ? message.enabled
+                ? "点击全局禁用（所有项目的快捷弹层都不再出现）"
+                : "点击全局启用（恢复所有项目可用）"
+              : message.enabled
+                ? "点击禁用（保留在配置文件中，从快捷弹层隐藏）"
+                : "点击启用（出现在输入框快捷弹层）"
+          }
+          onClick={onToggle}
+        >
+          {isGlobal ? (message.enabled ? "全局已启用" : "全局已禁用") : message.enabled ? "已启用" : "已禁用"}
+        </button>
+        {/* 项目级覆写按钮：只对有工作区的全局消息渲染；绿色=项目已启用，
+            橙色=项目已禁用（写项目覆写文件，不动全局配置）；全局已禁用时
+            恒灰并禁用（本项目状态没有意义）。 */}
+        {onToggleProject !== undefined && (
+          <ProjectOverrideButton
+            globalEnabled={message.enabled}
+            projectDisabled={projectDisabled}
+            onToggle={onToggleProject}
+          />
+        )}
+        <button type="button" className="skp-btn" onClick={onEdit}>
+          编辑
+        </button>
+        <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>
+          {confirming ? "确认删除？" : "删除"}
+        </button>
       </div>
       <dl className="skp-detail-fields">
         <dt>内容</dt>

@@ -33,11 +33,6 @@ export declare function writeMcpFile(filePath: string, servers: Record<string, M
  * 回退到 `"server"`。
  */
 export declare function sanitizeServerName(key: string): string;
-/**
- * 把字符串里的 `${VAR}` 引用替换成宿主进程环境变量值。
- * 未定义的环境变量替换为空字符串（不抛错）。
- */
-export declare function interpolateEnv(value: string, env?: NodeJS.ProcessEnv): string;
 /** 本插件产出的桥接层配置子集（stdio 或 streamable-http 二选一）。 */
 export type McpClientConfig = {
     transport: "stdio";

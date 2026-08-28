@@ -19,21 +19,6 @@ export interface ParsedSkill {
     body: string;
 }
 /**
- * 为 spec 生成精确的 frontmatter 块，仅在取值偏离默认时输出调用策略键。
- *
- * @param spec 要序列化的 skill 元数据
- * @returns 不含首尾 `---` 分隔行的 YAML 文本
- */
-export declare function frontmatterForSpec(spec: SkillSpec): string;
-/**
- * 序列化完整的 skill 文件内容（frontmatter 分隔 + YAML + 空行 + 正文）。
- *
- * @param spec skill 元数据
- * @param body 技能正文（写盘前会 trim）
- * @returns 完整的 `<name>.md` / `SKILL.md` 文本
- */
-export declare function serializeSkill(spec: SkillSpec, body: string): string;
-/**
  * 把 skill 文件文本解析回 spec + 正文。
  *
  * 与 provider 的 `parseFrontmatter` 口径一致：首行必须是 `---`、找到闭合的
@@ -63,10 +48,10 @@ export declare function readSkill(root: string, name: string, format: SkillForma
 /**
  * 写入一个 skill 文件。
  *
- * 采用"临时文件 + rename"的原子写入（先写 `<path>.tmp`，再 rename 覆盖目标），
- * 避免写一半留下残缺文件；Windows 上 rename 无法直接覆盖已存在文件，
- * 所以先 `rm(path, { force: true })` 再 rename（失败静默忽略）。
- * 目录布局会自动创建父目录。
+ * 采用"临时文件 + rename"的原子写入（shared/atomic-write.ts），避免写一半
+ * 留下残缺文件；目录布局会自动创建父目录。写操作按文件加锁（shared/file-lock
+ * 的 withFileLock），与 mcp / quick-messages 两个域的写路径同一口径：
+ * 多面板标签页并发写同一 skill 时串行化，避免互相覆盖。
  *
  * @returns 实际写入的文件绝对路径
  */

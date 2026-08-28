@@ -10,8 +10,10 @@
 
 import { findProjectRoot } from "../shared/project-root.js";
 import { withFileLock } from "../shared/file-lock.js";
+import { errMessage } from "../shared/errors.js";
 import { readMcpFile, sanitizeServerName, summarizeEntry, transportOf, validateEntry, writeMcpFile } from "./config-file.js";
 import { globalMcpFile, projectMcpFile } from "./paths.js";
+import type { OverridesManager } from "../overrides/manager.js";
 import type { McpListResult, McpScope, McpServerEntry, McpServerView, McpStatusView } from "./types.js";
 import type { McpLoader } from "./loader.js";
 
@@ -37,7 +39,7 @@ export interface McpUpsertInput extends McpWriteInput {
 export type McpOpResult = { ok: true } | { ok: false; errors: string[] };
 
 /** 创建管理服务；loader 由 index.ts 注入（自动挂载与状态共用同一实例）。 */
-export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
+export function createMcpManager(deps: McpManagerDeps, loader: McpLoader, overrides?: OverridesManager) {
   /** 按作用域解析配置文件路径；项目作用域缺少 cwd 时抛错。 */
   function fileFor(scope: McpScope, cwd?: string): string {
     if (scope === "global") return globalMcpFile(deps.dshHome);
@@ -56,21 +58,25 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
 
   /**
    * 合并列表：全局 + 项目（同名键项目遮蔽全局），按 key 排序。
+   * 传入 cwd 时应用该项目级"全局能力禁用"：被禁用的全局 server 标上
+   * disabledInProject（面板保留展示；loader 在挂载时跳过它们）。
    * 单个文件解析失败收集到 errors，不中断整体返回。
    */
   async function list(cwd?: string): Promise<McpListResult> {
     const errors: string[] = [];
     const globalFile = globalMcpFile(deps.dshHome);
     const projectFile = cwd !== undefined ? projectMcpFile(cwd) : undefined;
+    // 项目级禁用的全局 server 键集合（无 cwd 或读取失败时为空集合）。
+    const disabledMcp = new Set((await overrides?.sets(cwd))?.mcp ?? []);
     // 两个配置文件并行解析；各自失败互不影响。
     const [globalServers, projectServers] = await Promise.all([
       readMcpFile(globalFile).catch((error) => {
-        errors.push((error as Error).message);
+        errors.push(errMessage(error));
         return {} as Record<string, McpServerEntry>;
       }),
       projectFile !== undefined
         ? readMcpFile(projectFile).catch((error) => {
-            errors.push((error as Error).message);
+            errors.push(errMessage(error));
             return {} as Record<string, McpServerEntry>;
           })
         : Promise.resolve({} as Record<string, McpServerEntry>),
@@ -89,7 +95,9 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
       filePath,
     });
     for (const [key, entry] of Object.entries(globalServers)) {
-      views.push(view(key, entry, "global", globalFile, projectServers[key] !== undefined));
+      const row = view(key, entry, "global", globalFile, projectServers[key] !== undefined);
+      if (disabledMcp.has(key)) row.disabledInProject = true;
+      views.push(row);
     }
     if (projectFile !== undefined) {
       for (const [key, entry] of Object.entries(projectServers)) {
@@ -115,7 +123,7 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
       await reloadFor(input.scope, input.cwd);
       return { ok: true };
     } catch (error) {
-      return { ok: false, errors: [(error as Error).message] };
+      return { ok: false, errors: [errMessage(error)] };
     }
   }
 
@@ -138,7 +146,7 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
       await reloadFor(input.scope, input.cwd);
       return { ok: true };
     } catch (error) {
-      return { ok: false, errors: [(error as Error).message] };
+      return { ok: false, errors: [errMessage(error)] };
     }
   }
 
@@ -164,7 +172,7 @@ export function createMcpManager(deps: McpManagerDeps, loader: McpLoader) {
       await reloadFor(input.scope, input.cwd);
       return { ok: true };
     } catch (error) {
-      return { ok: false, errors: [(error as Error).message] };
+      return { ok: false, errors: [errMessage(error)] };
     }
   }
 

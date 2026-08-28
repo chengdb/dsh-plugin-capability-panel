@@ -44,9 +44,9 @@ export interface UpdateOptions {
     spec: SkillSpec;
     body: string;
 }
-/** 更新 skill：校验 spec，探测（或显式指定）布局后整体覆盖写回。 */
+/** 更新 skill：校验 spec 与名称，探测（或显式指定）布局后整体覆盖写回。 */
 export declare function updateSkill(options: UpdateOptions): Promise<CreateResult>;
-/** 删除 skill；目标不存在时返回错误信息而不是抛异常。 */
+/** 删除 skill；目标不存在或名称非法时返回错误信息而不是抛异常。 */
 export declare function removeSkill(root: string, name: string): Promise<{
     ok: boolean;
     errors?: string[];

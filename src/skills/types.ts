@@ -97,4 +97,10 @@ export interface SkillSummaryView {
   resourceDirectory?: string;
   /** 可写条目所属的受管根目录（客户端写回/导出时按 root 精确寻址）。 */
   root?: string;
+  /**
+   * 为 true 表示这个**全局** skill 被当前项目（list 的 cwd）在项目级声明为
+   * 禁用：面板保留展示（带"本项目禁用"标记），输入框快捷弹层与调用引导
+   * 会隐藏它。只对全局来源（user-dsh / user-agents）条目设置；项目条目恒缺省。
+   */
+  disabledInProject?: boolean;
 }

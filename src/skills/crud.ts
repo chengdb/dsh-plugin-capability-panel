@@ -19,8 +19,21 @@ import {
   skillFilePath,
   writeSkill,
 } from "./disk.js";
-import { validateSpec } from "./validate.js";
+import { isSkillName, validateSpec } from "./validate.js";
 import type { SkillFormat, SkillSpec } from "./types.js";
+
+/**
+ * 校验一个将被拼进文件路径的 skill 名。
+ *
+ * 所有以 `root + name` 定位文件的入口都必须在第一时间拒绝非法名：`name`
+ * 来自 RPC 入参，若形如 `../x` 可越出受管根删除/读取任意 `.md` 文件（install
+ * 路径已有 isSkillName 前置校验，crud / export 路径同样需要）。统一返回与
+ * crud 各函数一致的 `{ ok: false, errors }` 形状。
+ */
+function nameGuard<T extends { ok: boolean; errors?: string[] }>(name: unknown, source: string): T | undefined {
+  if (isSkillName(name)) return undefined;
+  return { ok: false, errors: [`invalid skill name "${String(name)}" (from ${source})`] } as T;
+}
 
 /** 创建 skill 的入参。 */
 export interface CreateOptions {
@@ -80,8 +93,10 @@ export interface UpdateOptions {
   body: string;
 }
 
-/** 更新 skill：校验 spec，探测（或显式指定）布局后整体覆盖写回。 */
+/** 更新 skill：校验 spec 与名称，探测（或显式指定）布局后整体覆盖写回。 */
 export async function updateSkill(options: UpdateOptions): Promise<CreateResult> {
+  const rejected = nameGuard<CreateResult>(options.name, "update");
+  if (rejected !== undefined) return rejected;
   const validation = validateSpec(options.spec);
   if (!validation.ok) return { ok: false, errors: validation.errors };
 
@@ -95,8 +110,10 @@ export async function updateSkill(options: UpdateOptions): Promise<CreateResult>
   return { ok: true, path };
 }
 
-/** 删除 skill；目标不存在时返回错误信息而不是抛异常。 */
+/** 删除 skill；目标不存在或名称非法时返回错误信息而不是抛异常。 */
 export async function removeSkill(root: string, name: string): Promise<{ ok: boolean; errors?: string[] }> {
+  const rejected = nameGuard(name, "remove");
+  if (rejected !== undefined) return rejected;
   const format = await detectFormat(root, name);
   if (format === undefined) return { ok: false, errors: [`skill "${name}" not found`] };
   await deleteSkill(root, name, format);
@@ -123,6 +140,8 @@ export interface SetEnabledOptions {
  * 元数据（whenToUse / metadata 等）原样保留。
  */
 export async function setSkillEnabled(options: SetEnabledOptions): Promise<{ ok: boolean; errors?: string[] }> {
+  const rejected = nameGuard(options.name, "setEnabled");
+  if (rejected !== undefined) return rejected;
   const format = await detectFormat(options.root, options.name);
   if (format === undefined) return { ok: false, errors: [`skill "${options.name}" not found`] };
   const parsed = await readSkill(options.root, options.name, format);
@@ -151,6 +170,8 @@ export interface ReadResult {
  * 目标缺失或解析失败时返回带错误信息的 ok: false。
  */
 export async function readSkillDetail(root: string, name: string): Promise<ReadResult> {
+  const rejected = nameGuard<ReadResult>(name, "read");
+  if (rejected !== undefined) return rejected;
   const format = await detectFormat(root, name);
   if (format === undefined) return { ok: false, errors: [`skill "${name}" not found`] };
   const parsed = await readSkill(root, name, format);
@@ -225,6 +246,8 @@ export interface CloneResult {
  * 注意：此函数目前仅作为公开 API 导出（index.ts），面板 UI 尚未调用。
  */
 export async function cloneSkill(fromRoot: string, toRoot: string, name: string, newName?: string): Promise<CloneResult> {
+  const rejected = nameGuard<CloneResult>(name, "clone") ?? (newName !== undefined ? nameGuard<CloneResult>(newName, "clone") : undefined);
+  if (rejected !== undefined) return rejected;
   const format = await detectFormat(fromRoot, name);
   if (format === undefined) return { ok: false, errors: [`skill "${name}" not found`] };
   const parsed = await readSkill(fromRoot, name, format);

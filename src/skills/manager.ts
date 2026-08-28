@@ -21,6 +21,7 @@ import { exportSkillFiles, exportToPath, installFromFiles, installFromPath } fro
 import type { TransferFile } from "./transfer.js";
 import { invocationPolicy } from "./types.js";
 import type { SkillFormat, SkillSummaryView, WritableScope } from "./types.js";
+import type { OverridesManager } from "../overrides/manager.js";
 
 /** 服务的构造依赖（用于覆盖默认目录解析）。 */
 export interface ManagerDeps {
@@ -40,7 +41,7 @@ export interface ManagedRoot {
  * 当项目根本身就是 dsh home 的父目录时（例如 cwd == home），`.dsh/skills`
  * 与全局根会是同一目录，此时保留先出现的条目——即项目分类优先。
  */
-export function dedupeRoots(roots: ManagedRoot[]): ManagedRoot[] {
+function dedupeRoots(roots: ManagedRoot[]): ManagedRoot[] {
   const seen = new Set<string>();
   return roots.filter((root) => {
     const key = root.path.replace(/[/\\]+$/, "").toLowerCase();
@@ -51,7 +52,7 @@ export function dedupeRoots(roots: ManagedRoot[]): ManagedRoot[] {
 }
 
 /** 收集一个工作区（项目 + 全局）的所有可写根目录。 */
-export function writableRoots(cwd: string | undefined, deps: ManagerDeps = {}): ManagedRoot[] {
+function writableRoots(cwd: string | undefined, deps: ManagerDeps = {}): ManagedRoot[] {
   const roots: ManagedRoot[] = [];
   if (cwd !== undefined) {
     const projectRoot = findProjectRoot(cwd);
@@ -67,6 +68,11 @@ export function writableRoots(cwd: string | undefined, deps: ManagerDeps = {}): 
   return roots;
 }
 
+/** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
+export function isGlobalSource(source: SkillSummaryView["source"]): boolean {
+  return source === "user-dsh" || source === "user-agents";
+}
+
 /**
  * 构建 `ctx.capabilityPanel.skills` 服务。`ctx` 提供 registry（`ctx.skills`）
  * 供合并读目录使用（本实现中的 list 直接读盘，registry 调用由外部面板
@@ -75,12 +81,19 @@ export function writableRoots(cwd: string | undefined, deps: ManagerDeps = {}): 
  * @param ctx 宿主上下文
  * @param config dshHome / agentsHome 覆盖
  */
-export function createService(ctx: any, config: { dshHome?: string; agentsHome?: string } = {}) {
+export function createService(ctx: any, config: { dshHome?: string; agentsHome?: string } = {}, overrides?: OverridesManager) {
   const deps = { dshHome: config.dshHome, agentsHome: config.agentsHome };
 
-  /** 面板受管根目录的只读磁盘视图（按名称排序）。 */
+  /**
+   * 面板受管根目录的只读磁盘视图（按名称排序）。
+   * 传入 cwd 时应用该项目级"全局能力禁用"：被禁用的全局 skill 标上
+   * disabledInProject（仍返回给面板展示，供用户恢复；输入框快捷弹层在
+   * 客户端再过滤掉它们）。
+   */
   async function list(cwd?: string): Promise<SkillSummaryView[]> {
     const roots = dedupeRoots(writableRoots(cwd, deps));
+    // 项目级禁用的全局 skill 名集合（无 cwd 或读取失败时为空集合）。
+    const disabledSkills = new Set((await overrides?.sets(cwd))?.skills ?? []);
     // 每个根目录内的读取并行（一次 readdir 拿名称+布局，再并发读文件），
     // 根与根之间串行即可：目录总量小，避免一次性打开过多文件句柄。
     const views: SkillSummaryView[] = [];
@@ -90,7 +103,7 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
         entries.map(async ({ name, format }) => {
           const parsed = await readSkill(root.path, name, format);
           if (parsed === undefined) return undefined;
-          return summaryView(
+          const view = summaryView(
             parsed.spec.name,
             parsed.spec.description,
             parsed.spec.whenToUse,
@@ -102,6 +115,8 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
             format === "directory" ? resourceDirectory(root.path, name) : undefined,
             root.path,
           );
+          if (disabledSkills.has(view.name) && isGlobalSource(view.source)) view.disabledInProject = true;
+          return view;
         }),
       );
       for (const view of loaded) {

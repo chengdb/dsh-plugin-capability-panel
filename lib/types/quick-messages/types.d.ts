@@ -39,6 +39,12 @@ export interface QuickMessageView {
     text: string;
     /** 声明这条消息的文件绝对路径。 */
     filePath: string;
+    /**
+     * 为 true 表示这个**全局**快捷消息被当前项目（list 的 cwd）在项目级声明为
+     * 禁用：面板保留展示（带"本项目禁用"标记），输入框快捷弹层会隐藏它。
+     * 只对全局条目设置；项目条目恒缺省。
+     */
+    disabledInProject?: boolean;
 }
 /** 合并列表操作的结果；单个文件解析失败不致命，收集到 errors 里。 */
 export interface QuickMessagesListResult {

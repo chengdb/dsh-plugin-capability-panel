@@ -46,10 +46,6 @@ export interface McpServerEntry {
     /** 为 true 时保留条目但不挂载。 */
     disabled?: boolean;
 }
-/** 一个 `.mcp.json` / `mcp.json` 文件的根形状。 */
-export interface McpFileShape {
-    mcpServers?: Record<string, McpServerEntry>;
-}
 /** 面板视角下的一条 server 配置（跨作用域合并后的视图）。 */
 export interface McpServerView {
     /** 文件里写的条目键名。 */
@@ -69,6 +65,12 @@ export interface McpServerView {
     entry: McpServerEntry;
     /** 声明这条条目的文件绝对路径。 */
     filePath: string;
+    /**
+     * 为 true 表示这个**全局** server 被当前项目（list 的 cwd）在项目级声明为
+     * 禁用：本项目的 session 不会挂载它（loader 跳过），面板保留展示（带
+     * "本项目禁用"标记）。只对全局条目设置；项目条目恒缺省。
+     */
+    disabledInProject?: boolean;
 }
 /** 合并列表操作的结果；单个文件解析失败不致命，收集到 errors 里。 */
 export interface McpListResult {

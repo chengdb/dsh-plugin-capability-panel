@@ -69,6 +69,10 @@ export interface PanelRpcService {
     remove(input: unknown): Promise<unknown>;
     setEnabled(input: unknown): Promise<unknown>;
   };
+  overrides: {
+    get(cwd?: string): Promise<unknown>;
+    toggle(input: unknown): Promise<unknown>;
+  };
 }
 
 /**
@@ -117,6 +121,10 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.quickMessages.remove(p) };
       case "quick.setEnabled":
         return { ok: true, value: await service.quickMessages.setEnabled(p) };
+      case "overrides.get":
+        return { ok: true, value: await service.overrides.get(cwd) };
+      case "overrides.toggle":
+        return { ok: true, value: await service.overrides.toggle(p) };
       default:
         return failure([`unknown endpoint "${endpoint}"`]);
     }

@@ -9,11 +9,13 @@
  *
  * @module @chengdb/capability-panel/client/mcp-panel
  */
-import type { McpApi } from "./api.js";
+import type { CapabilityPanelApi } from "./api.js";
 /**
  * MCP 视图主组件：状态管理 + 拉取/重拉 + 列表 + 详情/表单。
+ * 全局 server 在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可
+ * 恢复；被禁用的全局 server 在本项目的 session 里不会被挂载）。
  */
 export declare function McpView({ api, workspace }: {
-    api: McpApi;
+    api: CapabilityPanelApi;
     workspace?: string;
 }): import("react").JSX.Element;

@@ -25,17 +25,18 @@
  * props；写入只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
  * 写路径），读取用 `useInput((s) => s.draft)` 选择器订阅。
  *
- * 两个入口是两棵独立的 React 树，开合状态用模块级微存储共享（与
- * composer-mcp 同一模式）。按钮的"草稿含 skill 口令"状态随数据修订号
- * （打开弹层）与 owner props 的 input 快照（草稿每次编辑都会重渲染
- * 工具行）更新。
+ * 两个入口是两棵独立的 React 树，开合状态与**列表数据**用模块级存储共享
+ * （见 composer-common.ts）：弹层打开时拉取 skill 列表并写回存储的数据槽，
+ * 按钮直接从数据槽派生"草稿含口令"状态，避免两棵树各拉一次同一份列表。
+ * 按钮的"草稿含 skill 口令"状态随数据修订号（打开弹层）与 owner props 的
+ * input 快照（草稿每次编辑都会重渲染工具行）更新。
  *
  * @module @chengdb/capability-panel/client/composer-skills
  */
 import type { CapabilityPanelApi } from "./api.js";
 /** 切换（或显式设置）弹层开合；打开时 bump token 触发弹层重拉。 */
 export declare function setComposerSkillsOpen(open?: boolean): void;
-/** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerSkillsOpen 会统一派发。 */
+/** 记录能力工具组的视口位置（在打开弹层前调用）。 */
 export declare function setComposerSkillsAnchor(rect: {
     right: number;
     top: number;
@@ -43,8 +44,10 @@ export declare function setComposerSkillsAnchor(rect: {
 /**
  * 闪电图标按钮：点击开合弹层。草稿不含已知 `/skill` 口令时空心描边
  * （中性灰）；含已知口令时实心填充绿色（成功色，skp-composer-btn-active）。
- * skill 名列表随数据修订号与工作区变化重拉；草稿来自 owner props 的
- * InputZone input 快照（工具行随输入机状态重渲染，无需自行订阅）。
+ * skill 名列表读弹层写回的数据槽（按钮不再各自拉取同一份列表）；数据槽
+ * 在挂载/工作区切换后由按钮兜底拉一次，弹层打开后由弹层负责刷新。
+ * 草稿来自 owner props 的 InputZone input 快照（工具行随输入机状态重渲染，
+ * 无需自行订阅）。
  */
 export declare function ComposerSkillsButton({ api, draft }: {
     api: CapabilityPanelApi;
@@ -61,8 +64,8 @@ interface InputActionsFace {
 /**
  * Skills 快捷输入弹层：按 当前项目/全局 分组列出 user-invocable 的 skill，
  * 顶部一个过滤输入框；点击某行把 `/name ` 追加进草稿并关闭弹层。
- * 打开时重拉列表；Esc 或点击弹层外部关闭（捕获阶段 pointerdown，只关闭、
- * 不拦截该次点击）。
+ * 打开时重拉列表（并写回数据槽供按钮复用）；Esc 或点击弹层外部关闭
+ * （捕获阶段 pointerdown，只关闭、不拦截该次点击）。
  */
 export declare function ComposerSkillsOverlay({ api, useInput, inputActions, }: {
     api: CapabilityPanelApi;

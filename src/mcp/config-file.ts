@@ -9,8 +9,8 @@
  * @module @chengdb/capability-panel/mcp/config-file
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { atomicWriteText } from "../shared/atomic-write.js";
+import { readJsonDocument } from "../shared/json-config.js";
 
 import { summarizeEntry, transportOf, validateEntry } from "./entry-util.js";
 import type { McpServerEntry } from "./types.js";
@@ -31,23 +31,8 @@ const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
  * @returns key → 原始条目（不做任何规范化）
  */
 export async function readMcpFile(filePath: string): Promise<Record<string, McpServerEntry>> {
-  let text: string;
-  try {
-    text = await readFile(filePath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyMap();
-    throw error;
-  }
-  if (text.trim().length === 0) return emptyMap();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    throw new Error(`invalid JSON in ${filePath}: ${(error as Error).message}`);
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`invalid MCP config in ${filePath}: top level must be an object`);
-  }
+  const parsed = await readJsonDocument(filePath, "MCP config");
+  if (parsed === undefined) return emptyMap();
   const servers = (parsed as { mcpServers?: unknown }).mcpServers;
   if (servers === undefined) return emptyMap();
   if (servers === null || typeof servers !== "object" || Array.isArray(servers)) {
@@ -78,11 +63,7 @@ function emptyMap(): Record<string, McpServerEntry> {
  * 也避免同一进程同一毫秒的两个写者撞上同一个临时文件名。
  */
 export async function writeMcpFile(filePath: string, servers: Record<string, McpServerEntry>): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const body = `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`;
-  const tmp = join(dirname(filePath), `.mcp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
-  await writeFile(tmp, body, "utf8");
-  await rename(tmp, filePath);
+  await atomicWriteText(filePath, `${JSON.stringify({ mcpServers: servers }, null, 2)}\n`, "mcp");
 }
 
 /**
@@ -101,7 +82,7 @@ export function sanitizeServerName(key: string): string {
  * 把字符串里的 `${VAR}` 引用替换成宿主进程环境变量值。
  * 未定义的环境变量替换为空字符串（不抛错）。
  */
-export function interpolateEnv(value: string, env: NodeJS.ProcessEnv = process.env): string {
+function interpolateEnv(value: string, env: NodeJS.ProcessEnv = process.env): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => env[name] ?? "");
 }
 

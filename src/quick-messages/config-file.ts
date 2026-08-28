@@ -10,8 +10,8 @@
  * @module @chengdb/capability-panel/quick-messages/config-file
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { atomicWriteText } from "../shared/atomic-write.js";
+import { readJsonDocument } from "../shared/json-config.js";
 
 import type { QuickMessageEntry, QuickMessagesFileShape } from "./types.js";
 
@@ -28,23 +28,8 @@ export { validateQuickMessage } from "./entry-util.js";
  * @returns 名称 → 条目（不做任何规范化）
  */
 export async function readQuickMessagesFile(filePath: string): Promise<Record<string, QuickMessageEntry>> {
-  let text: string;
-  try {
-    text = await readFile(filePath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyMap();
-    throw error;
-  }
-  if (text.trim().length === 0) return emptyMap();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    throw new Error(`invalid JSON in ${filePath}: ${(error as Error).message}`);
-  }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`invalid quick-messages config in ${filePath}: top level must be an object`);
-  }
+  const parsed = await readJsonDocument(filePath, "quick-messages config");
+  if (parsed === undefined) return emptyMap();
   const messages = (parsed as QuickMessagesFileShape).messages;
   if (messages === undefined) return emptyMap();
   if (messages === null || typeof messages !== "object" || Array.isArray(messages)) {
@@ -81,9 +66,5 @@ function emptyMap(): Record<string, QuickMessageEntry> {
  * 也避免同一进程同一毫秒的两个写者撞上同一个临时文件名。
  */
 export async function writeQuickMessagesFile(filePath: string, messages: Record<string, QuickMessageEntry>): Promise<void> {
-  await mkdir(dirname(filePath), { recursive: true });
-  const body = `${JSON.stringify({ messages } satisfies QuickMessagesFileShape, null, 2)}\n`;
-  const tmp = join(dirname(filePath), `.quick-messages-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
-  await writeFile(tmp, body, "utf8");
-  await rename(tmp, filePath);
+  await atomicWriteText(filePath, `${JSON.stringify({ messages } satisfies QuickMessagesFileShape, null, 2)}\n`, "quick-messages");
 }

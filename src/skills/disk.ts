@@ -13,10 +13,12 @@
  * @module @chengdb/capability-panel/skills/disk
  */
 
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
+import { atomicWriteText } from "../shared/atomic-write.js";
+import { withFileLock } from "../shared/file-lock.js";
 import type { SkillFormat, SkillSpec } from "./types.js";
 
 /** 一个已解析的 skill：spec（frontmatter 元数据）+ 正文。 */
@@ -34,7 +36,7 @@ const FRONTMATTER_KEYS: Array<keyof SkillSpec> = ["name", "description", "whenTo
  * @param spec 要序列化的 skill 元数据
  * @returns 不含首尾 `---` 分隔行的 YAML 文本
  */
-export function frontmatterForSpec(spec: SkillSpec): string {
+function frontmatterForSpec(spec: SkillSpec): string {
   const data: Record<string, unknown> = { name: spec.name, description: spec.description };
   if (spec.whenToUse !== undefined && spec.whenToUse.length > 0) data.whenToUse = spec.whenToUse;
   if (spec.invocation["disable-model-invocation"] === true) data["disable-model-invocation"] = true;
@@ -50,7 +52,7 @@ export function frontmatterForSpec(spec: SkillSpec): string {
  * @param body 技能正文（写盘前会 trim）
  * @returns 完整的 `<name>.md` / `SKILL.md` 文本
  */
-export function serializeSkill(spec: SkillSpec, body: string): string {
+function serializeSkill(spec: SkillSpec, body: string): string {
   const fm = frontmatterForSpec(spec).trimEnd();
   return `---\n${fm}\n---\n\n${body.trim()}\n`;
 }
@@ -168,22 +170,17 @@ export async function readSkill(root: string, name: string, format: SkillFormat)
 /**
  * 写入一个 skill 文件。
  *
- * 采用"临时文件 + rename"的原子写入（先写 `<path>.tmp`，再 rename 覆盖目标），
- * 避免写一半留下残缺文件；Windows 上 rename 无法直接覆盖已存在文件，
- * 所以先 `rm(path, { force: true })` 再 rename（失败静默忽略）。
- * 目录布局会自动创建父目录。
+ * 采用"临时文件 + rename"的原子写入（shared/atomic-write.ts），避免写一半
+ * 留下残缺文件；目录布局会自动创建父目录。写操作按文件加锁（shared/file-lock
+ * 的 withFileLock），与 mcp / quick-messages 两个域的写路径同一口径：
+ * 多面板标签页并发写同一 skill 时串行化，避免互相覆盖。
  *
  * @returns 实际写入的文件绝对路径
  */
 export async function writeSkill(root: string, name: string, format: SkillFormat, spec: SkillSpec, body: string): Promise<string> {
   const path = skillFilePath(root, name, format);
-  if (format === "directory") await mkdir(dirname(path), { recursive: true });
-  else await mkdir(root, { recursive: true });
   const serialized = serializeSkill(spec, body);
-  const tmp = `${path}.${process.pid}-${Date.now()}.tmp`;
-  await writeFile(tmp, serialized, "utf8");
-  await rm(path, { force: true }).catch(() => undefined); // Windows rename-over-existing
-  await rename(tmp, path);
+  await withFileLock(path, () => atomicWriteText(path, serialized, "skill"));
   return path;
 }
 

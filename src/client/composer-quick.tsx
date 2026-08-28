@@ -31,61 +31,37 @@
  * 读取用 `useInput((s) => s.draft)` 选择器订阅。
  *
  * 两个入口是两棵独立的 React 树，开合状态用模块级微存储共享（与
- * composer-mcp / composer-skills 同一模式）。按钮无需拉取任何数据
- * （图标恒为空心，弹层打开时才按数据修订号与工作区变化重拉列表）。
+ * composer-mcp / composer-skills 同一模式，实现见 composer-common.ts）。
+ * 按钮无需拉取任何数据（图标恒为空心，弹层打开时才按数据修订号与工作区
+ * 变化重拉列表）。
  *
  * @module @chengdb/capability-panel/client/composer-quick
  */
 
 import { useEffect, useRef, useState } from "react";
 import type { CapabilityPanelApi, ClientQuickMessage } from "./api.js";
+import {
+  composerPopStyle,
+  createComposerStore,
+  useComposerDismiss,
+  useComposerStore,
+  useWorkspaceLabel,
+} from "./composer-common.js";
 
 // ---------------------------------------------------------------------------
-// 模块级开合存储（按钮树与弹层树共享）
+// 模块级开合存储（按钮树与弹层树共享；快捷消息按钮不消费数据槽）
 // ---------------------------------------------------------------------------
 
-const listeners = new Set<() => void>();
-let openState = false;
-/** 数据修订号：每次打开弹层时递增，弹层据此重拉列表（按钮不依赖数据）。 */
-let openToken = 0;
-/** 打开弹层时能力工具组的视口位置（右上角），弹层据此把右下角贴到按钮组右上角。 */
-let anchorRect: { right: number; top: number } | undefined;
-
-function emitChange(): void {
-  for (const listener of listeners) {
-    try {
-      listener();
-    } catch {
-      /* 单个监听器的失败不能影响其它监听器 */
-    }
-  }
-}
+const store = createComposerStore<ClientQuickMessage[]>();
 
 /** 切换（或显式设置）弹层开合；打开时 bump token 触发弹层重拉。 */
 export function setComposerQuickOpen(open?: boolean): void {
-  const next = open ?? !openState;
-  if (next === openState) return;
-  openState = next;
-  if (next) openToken += 1;
-  emitChange();
+  store.setOpen(open);
 }
 
-/** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerQuickOpen 会统一派发。 */
+/** 记录能力工具组的视口位置（在打开弹层前调用）。 */
 export function setComposerQuickAnchor(rect: { right: number; top: number }): void {
-  anchorRect = { right: rect.right, top: rect.top };
-}
-
-/** 订阅开合状态（useState + 手动订阅，等价于 mini useSyncExternalStore）。 */
-function useComposerQuickOpen(): { open: boolean; token: number; anchor: { right: number; top: number } | undefined } {
-  const [, force] = useState(0);
-  useEffect(() => {
-    const listener = () => force((n) => n + 1);
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-  return { open: openState, token: openToken, anchor: anchorRect };
+  store.setAnchor(rect);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,9 +102,9 @@ function SendIcon() {
  * 品牌色（skp-composer-btn-open）。无需拉取数据列表。
  */
 export function ComposerQuickButton() {
-  const { open } = useComposerQuickOpen();
+  const state = useComposerStore(store);
 
-  const className = ["skp-composer-btn", "skp-composer-btn-quick", open ? "skp-composer-btn-open" : ""]
+  const className = ["skp-composer-btn", "skp-composer-btn-quick", state.open ? "skp-composer-btn-open" : ""]
     .filter(Boolean)
     .join(" ");
 
@@ -138,7 +114,7 @@ export function ComposerQuickButton() {
       className={className}
       title="快捷消息"
       aria-label="快捷消息"
-      aria-expanded={open}
+      aria-expanded={state.open}
       onClick={(event) => {
         // 以整个能力工具组为锚（右下角贴按钮组右上角），三个弹层共用同一锚点。
         const group = event.currentTarget.closest(".skp-composer-tools");
@@ -185,20 +161,20 @@ export function ComposerQuickOverlay({
   useInput?: UseInputHook;
   inputActions?: InputActionsFace;
 }) {
-  const { open, token, anchor } = useComposerQuickOpen();
+  const state = useComposerStore(store);
+  const workspace = useWorkspaceLabel(api);
   const [messages, setMessages] = useState<ClientQuickMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
-  const [workspace, setWorkspace] = useState<string>(() => api.workspaceLabel());
   const popRef = useRef<HTMLDivElement>(null);
 
-  // 项目作用域（.dsh/quick-messages.json）跟随当前工作区或面板里的钉选。
-  useEffect(() => api.subscribeWorkspace(() => setWorkspace(api.workspaceLabel())), [api]);
+  // Esc 关闭 + 点击弹层外部关闭（捕获阶段只关闭、不拦截该次点击）。
+  useComposerDismiss(store, state.open, popRef, ".skp-composer-btn-quick");
 
   // 每次打开（token 变化）或工作区变化时重拉列表；关闭时清空过滤词。
   useEffect(() => {
-    if (!open) {
+    if (!state.open) {
       setQuery("");
       return;
     }
@@ -208,7 +184,7 @@ export function ComposerQuickOverlay({
     api.quickMessages
       .list()
       .then((list) => {
-        if (!cancelled) setMessages(list.messages.filter((m) => m.enabled));
+        if (!cancelled) setMessages(list.messages.filter((m) => m.enabled && m.disabledInProject !== true));
       })
       .catch((err) => {
         if (!cancelled) setError(String(err));
@@ -219,40 +195,13 @@ export function ComposerQuickOverlay({
     return () => {
       cancelled = true;
     };
-  }, [api, open, token, workspace]);
+  }, [api, state.open, state.token, workspace]);
 
-  // Esc 关闭弹层。
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setComposerQuickOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  // 点击弹层外部关闭：捕获阶段的 pointerdown 只关弹层、不拦截事件
-  // （不用全屏遮罩，该次点击照常落到目标元素上）。落在弹层内部或本触发
-  // 按钮（.skp-composer-btn-quick）上的点击不处理——按钮自身的 onClick 负责
-  // 开合切换；点其它按钮（如 Skills 按钮）时本弹层照常关闭。
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (popRef.current?.contains(target) === true) return;
-      if (target instanceof Element && target.closest(".skp-composer-btn-quick") !== null) return;
-      setComposerQuickOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [open]);
-
-  if (!open) return null;
+  if (!state.open) return null;
 
   return (
     <QuickPop
-      anchor={anchor}
+      anchor={state.anchor}
       popRef={popRef}
       messages={messages}
       loading={loading}
@@ -391,22 +340,7 @@ function QuickPop({
       className="skp-composer-pop skp-composer-pop-quick"
       role="dialog"
       aria-label="快捷消息"
-      style={
-        anchor === undefined
-          ? undefined
-          : {
-              position: "fixed",
-              // 必须显式解除 .skp-composer-pop 兜底定位的 left:0：fixed + 定宽
-              // 弹层若同时带 left 与 right 属于过度约束，LTR 下浏览器忽略 right、
-              // 采用 left，会把弹层钉死在视口左缘（盖住侧边栏）。
-              left: "auto",
-              // 钳制右偏移：极窄视口（按钮组右缘距视口右缘超过 内宽-288）时
-              // 保证弹层左缘不溢出视口左缘（280 = .skp-composer-pop 定宽）。
-              right: Math.min(window.innerWidth - anchor.right, Math.max(8, window.innerWidth - 280 - 8)),
-              bottom: window.innerHeight - anchor.top + 4,
-              maxHeight: Math.max(120, Math.min(320, anchor.top - 12)),
-            }
-      }
+      style={composerPopStyle(anchor)}
     >
       <div className="skp-composer-head">
         <span className="skp-composer-title">快捷消息</span>

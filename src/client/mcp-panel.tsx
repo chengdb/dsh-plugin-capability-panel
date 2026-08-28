@@ -10,13 +10,14 @@
  * @module @chengdb/capability-panel/client/mcp-panel
  */
 
-import { useEffect, useMemo, useState } from "react";
-import type { ClientMcpServer, McpApi, OpResult } from "./api.js";
+import { useMemo, useState } from "react";
+import type { CapabilityPanelApi, ClientMcpServer, McpApi, OpResult } from "./api.js";
 import { summarizeEntry, transportOf, validateEntry } from "../mcp/entry-util.js";
 import type { McpScope, McpServerEntry } from "../mcp/types.js";
 import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
-import { SCOPE_LABEL } from "./scope-tabs.js";
+import { hasWorkspaceLabel, ProjectOverrideButton, ScopeTabs, useAsyncList } from "./panel-common.js";
+import { aggregateMounts, MOUNT_LABEL, type MountInfo } from "./mcp-common.js";
 import type { ScopeTab } from "./scope-tabs.js";
 
 /** 复合行 id：同一个 key 可能同时存在于 project 与 global 两个作用域。 */
@@ -24,24 +25,24 @@ function rowId(server: Pick<ClientMcpServer, "scope" | "key">): string {
   return `${server.scope}:${server.key}`;
 }
 
-/** 面板内聚的挂载状态（脱去 session 维度，按 key 聚合最差状态）。 */
-type MountInfo = { state: "mounted" | "failed" | "conflict"; error?: string };
-
-/** 挂载状态的展示文案。 */
-const MOUNT_LABEL: Record<MountInfo["state"], string> = {
-  mounted: "已挂载",
-  failed: "挂载失败",
-  conflict: "名称冲突（已被其他会话挂载）",
-};
+/**
+ * 行圆点的 tooltip：以启用/禁用为主语义（与 Skills / 快捷消息同一套口径），
+ * 挂载状态（未挂载 / 失败 / 冲突）作为补充说明收进同一句。
+ */
+function rowDotTitle(server: ClientMcpServer, mount: MountInfo | undefined): string {
+  if (!server.enabled) return "已禁用（本项目的 session 不挂载）";
+  if (server.disabledInProject === true) return "本项目禁用（全局仍启用，本项目的 session 不挂载）";
+  if (mount === undefined) return "已启用 · 未挂载到当前会话";
+  return mount.error !== undefined ? `已启用 · ${MOUNT_LABEL[mount.state]}：${mount.error}` : `已启用 · ${MOUNT_LABEL[mount.state]}`;
+}
 
 /**
  * MCP 视图主组件：状态管理 + 拉取/重拉 + 列表 + 详情/表单。
+ * 全局 server 在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可
+ * 恢复；被禁用的全局 server 在本项目的 session 里不会被挂载）。
  */
-export function McpView({ api, workspace }: { api: McpApi; workspace?: string }) {
-  const [servers, setServers] = useState<ClientMcpServer[]>([]);
-  const [listErrors, setListErrors] = useState<string[]>([]);
-  const [mounts, setMounts] = useState<Record<string, MountInfo>>({});
-  const [loading, setLoading] = useState(true);
+export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace?: string }) {
+  const mcpApi = api.mcp;
   const [opError, setOpError] = useState<string | undefined>(undefined);
   const [tab, setTab] = useState<ScopeTab>("all");
   const [query, setQuery] = useState("");
@@ -54,43 +55,20 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined);
 
   /**
-   * 重新拉取：list + status 并行。挂载状态按 server.key 聚合，
-   * 多个 session 同名 server 取"最差"状态（conflict > failed > mounted），
-   * 数字越大代表越需要关注。
+   * 拉取 list + status 并聚合成单一结果（挂载时、工作区变化时自动执行，
+   * 写操作后显式 reload()）。挂载状态按 server.key 聚合，多个 session 同名
+   * server 取"最差"状态（conflict > failed > mounted），数字越大越需要关注。
    */
-  const reload = () => {
-    let cancelled = false;
-    setLoading(true);
-    setOpError(undefined);
-    Promise.all([api.list(), api.status().catch(() => [])])
-      .then(([list, statuses]) => {
-        if (cancelled) return;
-        setServers(list.servers);
-        setListErrors(list.errors);
-        const byKey: Record<string, MountInfo> = {};
-        const rank = (state: MountInfo["state"]) => (state === "conflict" ? 2 : state === "failed" ? 1 : 0);
-        for (const status of statuses) {
-          for (const mount of status.servers) {
-            const prev = byKey[mount.key];
-            const next: MountInfo = { state: mount.state, ...(mount.error !== undefined ? { error: mount.error } : {}) };
-            if (prev === undefined || rank(next.state) > rank(prev.state)) byKey[mount.key] = next;
-          }
-        }
-        setMounts(byKey);
-      })
-      .catch((err) => {
-        if (!cancelled) setOpError(String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  };
-
-  // 挂载时与工作区变化时（项目文件路径依赖 cwd）重新拉取。
-  useEffect(reload, [api, workspace]);
+  const { data, loading, error, reload } = useAsyncList(
+    async () => {
+      const [list, statuses] = await Promise.all([mcpApi.list(), mcpApi.status().catch(() => [])]);
+      return { servers: list.servers, listErrors: list.errors, mounts: aggregateMounts(statuses) };
+    },
+    [mcpApi, workspace],
+  );
+  const servers = data?.servers ?? [];
+  const listErrors = data?.listErrors ?? [];
+  const mounts = data?.mounts ?? {};
 
   // 过滤：作用域 Tab + 搜索词（命中 key 或摘要）。
   const visible = useMemo(() => {
@@ -118,7 +96,12 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
 
   /** 启用/禁用切换（直接写入配置文件，落盘后宿主自动重挂）。 */
   const onToggle = (server: ClientMcpServer) => {
-    void runOp(api.setEnabled({ scope: server.scope, key: server.key, enabled: !server.enabled }));
+    void runOp(mcpApi.setEnabled({ scope: server.scope, key: server.key, enabled: !server.enabled }));
+  };
+
+  /** 切换全局 server 在当前项目的禁用状态（写项目覆写文件，不动全局配置，落盘后宿主热重挂本项目的 session）。 */
+  const onToggleProjectDisabled = (server: ClientMcpServer) => {
+    void runOp(api.overrides.toggle("mcp", server.key));
   };
 
   /** 删除：第一次点击进入确认态；同一行再次点击才真正删除并清空选中。 */
@@ -129,7 +112,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
       return;
     }
     setConfirmDelete(undefined);
-    void runOp(api.remove({ scope: server.scope, key: server.key })).then((ok) => {
+    void runOp(mcpApi.remove({ scope: server.scope, key: server.key })).then((ok) => {
       if (ok) setSelected(undefined);
     });
   };
@@ -137,19 +120,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
   return (
     <div className="skp-domain">
       <div className="skp-subheader">
-        <div className="skp-tabs" role="tablist">
-          {(["all", "project", "global"] as ScopeTab[]).map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              className={tab === t ? "skp-tab skp-tab-active" : "skp-tab"}
-              onClick={() => setTab(t)}
-            >
-              {SCOPE_LABEL[t]}
-            </button>
-          ))}
-        </div>
+        <ScopeTabs value={tab} onChange={setTab} />
         <input
           className="skp-search"
           type="search"
@@ -173,6 +144,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
       {/* 非致命错误行：列表读取问题 / 写操作失败提示。 */}
       {listErrors.length > 0 && <div className="skp-error">{listErrors.join("\n")}</div>}
       {opError && <div className="skp-error">{opError}</div>}
+      {error && <div className="skp-error">{error}</div>}
       {loading && <div className="skp-status">加载中…</div>}
 
       {!loading && (
@@ -192,10 +164,13 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
                     }}
                   >
                     <span className="skp-row-name">
-                      {/* 挂载状态圆点：mounted 绿 / failed 红 / conflict 黄 / 未挂载灰。 */}
+                      {/* 状态圆点（与 Skills / 快捷消息同一控件族、同一语义）：
+                          已禁用（含全局已禁用）恒为灰；仅全局启用时区分
+                          本项目禁用（橙）/ 启用（绿）；挂载异常（失败/冲突/
+                          未挂载）用 meta 标签 + tooltip 表达，不占圆点颜色。 */}
                       <span
-                        className={`skp-dot skp-dot-${mount?.state ?? "none"}`}
-                        title={mount === undefined ? "未挂载到当前会话" : MOUNT_LABEL[mount.state]}
+                        className={`skp-dot ${!server.enabled ? "" : server.disabledInProject === true ? "skp-dot-project-disabled" : "skp-dot-enabled"}`}
+                        title={rowDotTitle(server, mount)}
                       />
                       {server.key}
                     </span>
@@ -205,7 +180,13 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
                       </span>
                       <span className="skp-tag skp-tag-flat">{server.transport}</span>
                       {!server.enabled && <span className="skp-tag skp-tag-readonly">已禁用</span>}
+                      {/* 启用但挂载异常的实时信号：失败红 / 冲突橙（tooltip 里有详情）。 */}
+                      {server.enabled && mount?.state === "failed" && <span className="skp-tag skp-tag-error">挂载失败</span>}
+                      {server.enabled && mount?.state === "conflict" && <span className="skp-tag skp-tag-warn">冲突</span>}
                       {server.shadowed && <span className="skp-tag skp-tag-directory">被遮蔽</span>}
+                      {/* 本项目禁用的橙色标记只对"全局仍启用"的条目有意义
+                          （全局已禁用的整行已是灰色，无需再用橙色标记）。 */}
+                      {server.enabled && server.disabledInProject === true && <span className="skp-tag skp-tag-project-disabled">本项目禁用</span>}
                     </span>
                     <span className="skp-row-desc">{server.summary}</span>
                   </button>
@@ -224,6 +205,12 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
                 onEdit={() => setEditServer(selectedServer)}
                 onToggle={() => onToggle(selectedServer)}
                 onDelete={() => onDelete(selectedServer)}
+                projectDisabled={selectedServer.disabledInProject === true}
+                onToggleProject={
+                  selectedServer.scope === "global" && hasWorkspaceLabel(workspace)
+                    ? () => onToggleProjectDisabled(selectedServer)
+                    : undefined
+                }
               />
             ) : (
               <div className="skp-detail-empty">选择一个服务器查看详情，或新增一个。</div>
@@ -235,7 +222,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
       {/* 新增弹窗：表单 / JSON 两种模式（与技能安装弹窗同构）。 */}
       {addOpen && (
         <McpAddDialog
-          api={api}
+          api={mcpApi}
           servers={servers}
           workspace={workspace}
           onClose={() => setAddOpen(false)}
@@ -245,7 +232,7 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
       {/* 编辑弹窗：与新增同款外壳（Modal + 内嵌表单）。 */}
       {editServer !== undefined && (
         <McpEditDialog
-          api={api}
+          api={mcpApi}
           server={editServer}
           workspace={workspace}
           onClose={() => setEditServer(undefined)}
@@ -260,7 +247,10 @@ export function McpView({ api, workspace }: { api: McpApi; workspace?: string })
 // 详情卡片
 // ---------------------------------------------------------------------------
 
-/** 详情卡片：只读展示条目字段 + 挂载状态 + 编辑/启停/删除操作。 */
+/** 详情卡片：只读展示条目字段 + 挂载状态 + 编辑/启停/删除操作。状态按钮的
+ *  文字与颜色随状态变化：全局 server 有工作区时是两个按钮——
+ *  「全局已启用/全局已禁用」管全局配置，「项目已启用/项目已禁用」
+ *  管项目级覆写（不动全局配置，写后宿主热重挂本项目的 session）。 */
 function McpDetail({
   server,
   mount,
@@ -268,6 +258,8 @@ function McpDetail({
   onEdit,
   onToggle,
   onDelete,
+  projectDisabled,
+  onToggleProject,
 }: {
   server: ClientMcpServer;
   mount?: MountInfo;
@@ -275,32 +267,56 @@ function McpDetail({
   onEdit(): void;
   onToggle(): void;
   onDelete(): void;
+  /** 该全局 server 是否被当前项目在项目级声明禁用。 */
+  projectDisabled: boolean;
+  /** 切换"在本项目禁用"（无工作区或项目条目时为 undefined，不渲染该按钮）。 */
+  onToggleProject: (() => void) | undefined;
 }) {
+  const isGlobal = server.scope === "global";
   return (
     <div className="skp-detail-card">
-      {/* 头部：标题 + 操作按钮（启用/禁用开关 / 编辑 / 删除，删除走幽灵红样式）。 */}
+      {/* 头部：标题；操作按钮单独占一行，置于标题之下。 */}
       <div className="skp-detail-head">
         <h3>{server.key}</h3>
-        <div className="skp-detail-actions">
-          {/* 启用/禁用开关（与 Skills 详情卡同一 skp-switch 控件族）。 */}
-          <span className="skp-detail-enable">
-            <label
-              className="skp-switch"
-              title={server.enabled ? "点击禁用（保留在配置文件中，不挂载）" : "点击启用（写入配置文件并挂载）"}
-            >
-              <input type="checkbox" checked={server.enabled} onChange={onToggle} />
-              <span className="skp-switch-track" />
-            </label>
-            <span className="skp-detail-enable-label">{server.enabled ? "已启用" : "已禁用"}</span>
-          </span>
-          <button type="button" className="skp-btn" onClick={onEdit}>
-            编辑
-          </button>
-          {/* 二次确认：confirming 时按钮变红并显示确认文案。 */}
-          <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>
-            {confirming ? "确认删除？" : "删除"}
-          </button>
-        </div>
+      </div>
+      <div className="skp-detail-actions">
+        {/* 启用/禁用状态按钮：只管条目自身配置；全局行带「全局」前缀，
+            与右侧的「本项目」按钮区分开。 */}
+        <button
+          type="button"
+          className={`skp-btn ${server.enabled ? "skp-state-on" : "skp-state-off"}`}
+          title={
+            isGlobal
+              ? server.enabled
+                ? "点击全局禁用（所有项目的 session 都不再挂载）"
+                : "点击全局启用（恢复所有项目挂载）"
+              : server.enabled
+                ? "点击禁用（保留在配置文件中，不挂载）"
+                : "点击启用（写入配置文件并挂载）"
+          }
+          onClick={onToggle}
+        >
+          {isGlobal ? (server.enabled ? "全局已启用" : "全局已禁用") : server.enabled ? "已启用" : "已禁用"}
+        </button>
+        {/* 项目级覆写按钮：只对有工作区的全局 server 渲染；绿色=项目已启用，
+            橙色=项目已禁用（写项目覆写文件，不动全局配置）；全局已禁用时
+            恒灰并禁用（本项目状态没有意义）。恢复措辞用「挂载」（其他域用
+            「生效」）。 */}
+        {onToggleProject !== undefined && (
+          <ProjectOverrideButton
+            globalEnabled={server.enabled}
+            projectDisabled={projectDisabled}
+            actionWord="挂载"
+            onToggle={onToggleProject}
+          />
+        )}
+        <button type="button" className="skp-btn" onClick={onEdit}>
+          编辑
+        </button>
+        {/* 二次确认：confirming 时按钮变红并显示确认文案。 */}
+        <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>
+          {confirming ? "确认删除？" : "删除"}
+        </button>
       </div>
       <dl className="skp-detail-fields">
         <dt>命名空间</dt>

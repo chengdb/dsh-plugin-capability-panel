@@ -10,9 +10,9 @@
 
 | 能力域 | 浏览/搜索 | 新增/安装 | 编辑 | 启用/禁用 | 删除 | 导入/导出 |
 |---|---|---|---|---|---|---|
-| **Skills** | ✅ 双作用域 + 详情 | ✅ 上传 / 宿主路径 / URL 三种来源 | ✅ | ✅ 一键开关 | ✅ 两击确认 | ✅ 下载 zip / 复制到宿主目录 |
-| **MCP 服务器** | ✅ 双作用域 + 实时挂载状态 | ✅ 表单新增（stdio/sse/http） | ✅ | ✅ 热重挂 | ✅ | ✅ `.mcp.json` 与 Claude Code 格式兼容 |
-| **快捷消息** | ✅ 双作用域 + 搜索 | ✅ 多行正文 | ✅ | ✅ | ✅ | ✅ JSON 配置文件即数据 |
+| **Skills** | ✅ 双作用域 + 详情 | ✅ 上传 / 宿主路径 / URL 三种来源 | ✅ | ✅ 状态按钮 + 项目级禁用全局项 | ✅ 两击确认 | ✅ 下载 zip / 复制到宿主目录 |
+| **MCP 服务器** | ✅ 双作用域 + 实时挂载状态 | ✅ 表单新增（stdio/sse/http） | ✅ | ✅ 热重挂 + 项目级禁用全局项 | ✅ | ✅ `.mcp.json` 与 Claude Code 格式兼容 |
+| **快捷消息** | ✅ 双作用域 + 搜索 | ✅ 多行正文 | ✅ | ✅ 状态按钮 + 项目级禁用全局项 | ✅ | ✅ JSON 配置文件即数据 |
 
 ## 亮点
 
@@ -47,10 +47,11 @@ store-only zip；也可以复制到宿主任意目录。
 
 ### ⚡ 一键启用/禁用，不动正文
 
-每个 skill 详情卡片上有「已启用 / 已禁用」开关。禁用只写入
-`user-invocable: false` + `disable-model-invocation: true` 两个扁平键——
-正文与其它元数据原样保留，启用即清除恢复。禁用的 skill 会立刻从输入框的
-Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作按钮。
+每个 skill 详情卡片上有「已启用 / 已禁用」状态按钮（文字与颜色随状态
+变化）。禁用只写入 `user-invocable: false` + `disable-model-invocation: true`
+两个扁平键——正文与其它元数据原样保留，启用即清除恢复。禁用的 skill 会
+立刻从输入框的 Skills 快捷弹层中消失。只读条目（custom / bundled）不显示
+操作按钮。
 
 ![Skill 详情与启停开关](docs/screenshots/skill-detail.png)
 
@@ -63,7 +64,9 @@ Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作
   Cordis context——工具以 `mcp__<serverName>__<tool>` 出现在**该 session
   内**，按 session 隔离，agent 销毁自动卸载。
 - 面板里每次新增/编辑/删除/启停，都会**自动重挂受影响 session** 的
-  MCP 连接；列表上的圆点实时显示挂载状态（绿=已挂载，黄=冲突，灰=未挂载）。
+  MCP 连接；列表圆点与 Skills / 快捷消息同一套语义（绿=已启用，灰=已禁用，
+  橙=本项目禁用），挂载失败/冲突/未挂载等实时状态用行内标签与 tooltip
+  呈现，详情卡「状态」字段保留完整挂载信息与错误。
 
 ![面板：MCP 域列表与状态](docs/screenshots/panel-mcp.png)
 
@@ -74,6 +77,20 @@ Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作
 禁用的消息只从输入框弹层隐藏，配置仍然保留。
 
 ![面板：快捷消息域](docs/screenshots/panel-quick.png)
+
+### 🎯 全局能力，可以只在这个项目里禁用
+
+全局的 skill / MCP server / 快捷消息默认对所有项目生效。如果某个全局能力
+只想在当前项目里关掉，不必动全局配置：打开该条目的详情卡，点击
+**「项目已启用 / 项目已禁用」状态按钮**（绿=生效，橙=禁用）即可。
+
+- 声明写入项目级覆写文件 `<项目根>/.dsh/capability-overrides.json`，
+  全局配置原样保留，其他项目完全不受影响；
+- 效果真实生效：Skills / 快捷消息立刻从输入框弹层消失，MCP server 从
+  本项目所有 session 里**热卸载**（恢复时自动重挂）；
+- 列表行用橙色圆点 + 「本项目禁用」标签标出，一眼可辨；
+- 详情卡上「全局已启用 / 全局已禁用」按钮仍然只管全局配置本身，与
+  「本项目」按钮并排但语义自明。
 
 ### ⌨️ 输入框里的「能力工具组」
 
@@ -90,8 +107,10 @@ Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作
   **一键直发**整条消息（不经过草稿）。
 
   ![快捷消息弹层与一键直发](docs/screenshots/composer-quick.png)
-- **MCP 弹层**：带已启用数量徽标，逐行开关直接启用/禁用 server——
-  写配置文件 + 自动热重挂，与面板同一语义。
+- **MCP 弹层**：逐行开关控制 server 的**本项目启用/禁用**——项目条目直接写
+  项目配置，全局条目走项目级覆写（不翻全局配置，其他项目不受影响），
+  全局已禁用的 server 不在此列出（启用全局请到能力面板）；写配置 +
+  自动热重挂，与面板同一语义。
 
   ![MCP 快捷开关弹层](docs/screenshots/composer-mcp.png)
 
@@ -104,9 +123,10 @@ Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作
 │  └ 能力面板浮层      │ /capability│  ├ skills        磁盘 CRUD    │
 │ conversation.input  │ -panel    │  ├ mcp           配置 CRUD +   │
 │  └ 能力工具组×3      │ 通道       │  │               热挂载 loader │
-│ conversation.input  │           │  └ quickMessages 配置 CRUD     │
-│  └ 弹层×3            │           │ agent/created → dsh-mcp-client│
-└─────────────────────┘           └──────────────────────────────┘
+│ conversation.input  │           │  ├ quickMessages 配置 CRUD     │
+│  └ 弹层×3            │           │  └ overrides 项目级禁用声明    │
+└─────────────────────┘           │ agent/created → dsh-mcp-client│
+                                  └──────────────────────────────┘
 ```
 
 - **不重复注册 skills provider**：读取复用 `ctx.skills` 与受管根目录直读，
@@ -122,7 +142,7 @@ Skills 快捷弹层中消失。只读条目（custom / bundled）不显示操作
 安装最新 release（推荐，版本钉死）：
 
 ```powershell
-dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v0.7.0"
+dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v0.8.0"
 dsh web        # 打开 Web GUI，侧栏底部可见「能力面板」
 ```
 
@@ -178,6 +198,7 @@ src/
   skills/         skills 域：磁盘读写、CRUD、安装/导出、URL 下载、校验
   mcp/            MCP 域：.mcp.json 读写、agent 自动挂载、写后热重挂
   quick-messages/ 快捷消息域：JSON 配置读写、CRUD
+  overrides/      项目级禁用域：.dsh/capability-overrides.json 读写、覆写切换
   client/         React 面板、三个 composer 弹层、zip 工具、自含样式
 ```
 

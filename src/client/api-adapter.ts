@@ -14,6 +14,7 @@ import type {
   CapabilityPanelApi,
   ClientMcpList,
   ClientMcpStatus,
+  ClientOverrides,
   ClientQuickMessagesList,
   ClientSkillDetail,
   ClientSkillSummary,
@@ -225,6 +226,22 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
       },
     },
 
+    overrides: {
+      /** 读取当前项目的禁用声明全量（宿主侧无工作区时返回空清单）。 */
+      async get() {
+        const cwd = deps.currentWorkspaceCwd();
+        const result = await rpc("overrides.get", { cwd });
+        if (!result.ok) throw new Error(result.errors.join("; "));
+        return result.value as ClientOverrides;
+      },
+
+      /** 切换某个全局能力在本项目的禁用状态（写回后由面板重拉列表刷新标记）。 */
+      async toggle(domain, key) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("overrides.toggle", { cwd, domain, key })) as { ok: true } | { ok: false; errors: string[] };
+      },
+    },
+
     // 工作区相关方法直接透传注入的 deps（状态由 client.ts 持有）。
     workspaceLabel() {
       return deps.currentWorkspaceCwd() ?? "（无工作区）";
@@ -266,6 +283,7 @@ function toSummary(value: Record<string, unknown>): ClientSkillSummary {
     readOnly: value.readOnly === true,
     ...(typeof value.path === "string" ? { path: value.path } : {}),
     ...(typeof value.root === "string" ? { root: value.root } : {}),
+    ...(value.disabledInProject === true ? { disabledInProject: true } : {}),
   };
 }
 

@@ -65,6 +65,10 @@ export interface PanelRpcService {
         remove(input: unknown): Promise<unknown>;
         setEnabled(input: unknown): Promise<unknown>;
     };
+    overrides: {
+        get(cwd?: string): Promise<unknown>;
+        toggle(input: unknown): Promise<unknown>;
+    };
 }
 /**
  * 把 `(endpoint, payload)` 路由到服务并规范化结果。

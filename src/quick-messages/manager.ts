@@ -11,6 +11,8 @@
 import { readQuickMessagesFile, validateQuickMessage, writeQuickMessagesFile } from "./config-file.js";
 import { globalQuickMessagesFile, projectQuickMessagesFile } from "./paths.js";
 import { withFileLock } from "../shared/file-lock.js";
+import { errMessage } from "../shared/errors.js";
+import type { OverridesManager } from "../overrides/manager.js";
 import type { QuickMessageEntry, QuickMessagesListResult, QuickMessageView, QuickOpResult, QuickScope } from "./types.js";
 
 /** 管理服务的构造依赖。 */
@@ -33,7 +35,7 @@ export interface QuickUpsertInput extends QuickWriteInput {
 }
 
 /** 创建管理服务。 */
-export function createQuickMessagesManager(deps: QuickMessagesManagerDeps) {
+export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager) {
   /** 按作用域解析配置文件路径；项目作用域缺少 cwd 时抛错。 */
   function fileFor(scope: QuickScope, cwd?: string): string {
     if (scope === "global") return globalQuickMessagesFile(deps.dshHome);
@@ -45,21 +47,25 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps) {
    * 合并列表：全局 + 项目，按名称排序。同名条目保留两份
    * （面板在 input 快捷弹层里按作用域分组展示，弹层插入时取"一条"即可，
    * 面板里可分别编辑/删除各作用域的同名条目）。
+   * 传入 cwd 时应用该项目级"全局能力禁用"：被禁用的全局消息标上
+   * disabledInProject（输入框快捷弹层在客户端再过滤掉它们）。
    * 单个文件解析失败收集到 errors，不中断整体返回。
    */
   async function list(cwd?: string): Promise<QuickMessagesListResult> {
     const errors: string[] = [];
     const globalFile = globalQuickMessagesFile(deps.dshHome);
     const projectFile = cwd !== undefined ? projectQuickMessagesFile(cwd) : undefined;
+    // 项目级禁用的全局快捷消息名集合（无 cwd 或读取失败时为空集合）。
+    const disabledQuick = new Set((await overrides?.sets(cwd))?.quickMessages ?? []);
     // 两个配置文件并行解析；各自失败互不影响。
     const [globalMessages, projectMessages] = await Promise.all([
       readQuickMessagesFile(globalFile).catch((error) => {
-        errors.push((error as Error).message);
+        errors.push(errMessage(error));
         return {} as Record<string, QuickMessageEntry>;
       }),
       projectFile !== undefined
         ? readQuickMessagesFile(projectFile).catch((error) => {
-            errors.push((error as Error).message);
+            errors.push(errMessage(error));
             return {} as Record<string, QuickMessageEntry>;
           })
         : Promise.resolve({} as Record<string, QuickMessageEntry>),
@@ -74,7 +80,9 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps) {
       filePath,
     });
     for (const [name, entry] of Object.entries(globalMessages)) {
-      views.push(view(name, entry, "global", globalFile));
+      const row = view(name, entry, "global", globalFile);
+      if (disabledQuick.has(name)) row.disabledInProject = true;
+      views.push(row);
     }
     if (projectFile !== undefined) {
       for (const [name, entry] of Object.entries(projectMessages)) {
@@ -107,7 +115,7 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps) {
         return { ok: true };
       });
     } catch (error) {
-      return { ok: false, errors: [(error as Error).message] };
+      return { ok: false, errors: [errMessage(error)] };
     }
   }
 
@@ -128,7 +136,7 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps) {
         return { ok: true };
       });
     } catch (error) {
-      return { ok: false, errors: [(error as Error).message] };
+      return { ok: false, errors: [errMessage(error)] };
     }
   }
 
@@ -152,7 +160,7 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps) {
         return { ok: true };
       });
     } catch (error) {
-      return { ok: false, errors: [(error as Error).message] };
+      return { ok: false, errors: [errMessage(error)] };
     }
   }
 

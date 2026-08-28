@@ -9,11 +9,12 @@
  *
  * @module @chengdb/capability-panel/client/quick-messages-panel
  */
-import type { QuickMessagesApi } from "./api.js";
+import type { CapabilityPanelApi } from "./api.js";
 /**
  * 快捷消息视图主组件：状态管理 + 拉取/重拉 + 列表 + 详情/表单。
+ * 全局条目在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可恢复）。
  */
 export declare function QuickMessagesPanel({ api, workspace }: {
-    api: QuickMessagesApi;
+    api: CapabilityPanelApi;
     workspace?: string;
 }): import("react").JSX.Element;

@@ -31,15 +31,16 @@
  * 读取用 `useInput((s) => s.draft)` 选择器订阅。
  *
  * 两个入口是两棵独立的 React 树，开合状态用模块级微存储共享（与
- * composer-mcp / composer-skills 同一模式）。按钮无需拉取任何数据
- * （图标恒为空心，弹层打开时才按数据修订号与工作区变化重拉列表）。
+ * composer-mcp / composer-skills 同一模式，实现见 composer-common.ts）。
+ * 按钮无需拉取任何数据（图标恒为空心，弹层打开时才按数据修订号与工作区
+ * 变化重拉列表）。
  *
  * @module @chengdb/capability-panel/client/composer-quick
  */
 import type { CapabilityPanelApi } from "./api.js";
 /** 切换（或显式设置）弹层开合；打开时 bump token 触发弹层重拉。 */
 export declare function setComposerQuickOpen(open?: boolean): void;
-/** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerQuickOpen 会统一派发。 */
+/** 记录能力工具组的视口位置（在打开弹层前调用）。 */
 export declare function setComposerQuickAnchor(rect: {
     right: number;
     top: number;

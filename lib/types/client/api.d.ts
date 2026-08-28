@@ -13,6 +13,7 @@
  */
 import type { SkillFormat, SkillSpec, WritableScope } from "../skills/types.js";
 import type { McpScope, McpServerEntry } from "../mcp/types.js";
+import type { CapabilityDomain } from "../overrides/types.js";
 /** 面板列表里的一行 skill 摘要（调用策略已拍平为两个布尔）。 */
 export interface ClientSkillSummary {
     name: string;
@@ -26,6 +27,11 @@ export interface ClientSkillSummary {
     path?: string;
     /** 可写条目所属的受管根目录（写回/导出按 root 精确寻址）。 */
     root?: string;
+    /**
+     * 为 true 表示这个**全局** skill 被当前项目在项目级声明为禁用：
+     * 面板保留展示（带"本项目禁用"标记），输入框快捷弹层会隐藏它。
+     */
+    disabledInProject?: boolean;
 }
 /** skill 详情 = 摘要 + 完整 spec + 正文 + 资源文件列表。 */
 export interface ClientSkillDetail extends ClientSkillSummary {
@@ -149,6 +155,11 @@ export interface ClientMcpServer {
     summary: string;
     entry: McpServerEntry;
     filePath: string;
+    /**
+     * 为 true 表示这个**全局** server 被当前项目在项目级声明为禁用：
+     * 本项目的 session 不会挂载它，面板保留展示（带"本项目禁用"标记）。
+     */
+    disabledInProject?: boolean;
 }
 /** 合并列表结果：servers + 非致命的读取错误。 */
 export interface ClientMcpList {
@@ -201,6 +212,11 @@ export interface ClientQuickMessage {
     text: string;
     /** 声明这条消息的文件绝对路径。 */
     filePath: string;
+    /**
+     * 为 true 表示这个**全局**快捷消息被当前项目在项目级声明为禁用：
+     * 面板保留展示（带"本项目禁用"标记），输入框快捷弹层会隐藏它。
+     */
+    disabledInProject?: boolean;
 }
 /** 合并列表结果：messages + 非致命的读取错误。 */
 export interface ClientQuickMessagesList {
@@ -225,17 +241,36 @@ export interface QuickMessagesApi {
         enabled: boolean;
     }): Promise<OpResult>;
 }
+/** 面板视角的完整禁用状态（三个域各自的禁用清单 + 声明文件路径）。 */
+export interface ClientOverrides {
+    skills: string[];
+    quickMessages: string[];
+    mcp: string[];
+    /** 声明文件绝对路径（无项目时缺省）。 */
+    filePath?: string;
+}
+/** 项目级禁用域的面板 API。 */
+export interface OverridesApi {
+    /** 当前项目的禁用声明全量（无工作区时返回空清单）。 */
+    get(): Promise<ClientOverrides>;
+    /**
+     * 切换某个**全局**能力在本项目的禁用状态：不在清单里 → 加入（禁用）；
+     * 已在清单里 → 移除（恢复）。落盘 `<项目根>/.dsh/capability-overrides.json`。
+     */
+    toggle(domain: CapabilityDomain, key: string): Promise<OpResult>;
+}
 /** 项目下拉框里的一个工作区选项。 */
 export interface WorkspaceOption {
     id: string;
     path: string;
     title?: string;
 }
-/** 面板需要的全部宿主能力（skills + mcp + 快捷消息 + 工作区选择），传输无关。 */
+/** 面板需要的全部宿主能力（skills + mcp + 快捷消息 + 项目级禁用 + 工作区选择），传输无关。 */
 export interface CapabilityPanelApi {
     skills: SkillsApi;
     mcp: McpApi;
     quickMessages: QuickMessagesApi;
+    overrides: OverridesApi;
     /** 面板头部的"项目作用域"目录标签。 */
     workspaceLabel(): string;
     /**

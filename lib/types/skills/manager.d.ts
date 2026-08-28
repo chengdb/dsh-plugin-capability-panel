@@ -13,6 +13,7 @@
  */
 import type { TransferFile } from "./transfer.js";
 import type { SkillFormat, SkillSummaryView, WritableScope } from "./types.js";
+import type { OverridesManager } from "../overrides/manager.js";
 /** 服务的构造依赖（用于覆盖默认目录解析）。 */
 export interface ManagerDeps {
     dshHome?: string;
@@ -23,15 +24,8 @@ export interface ManagedRoot {
     source: "user-dsh" | "user-agents" | "project-dsh" | "project-agents";
     path: string;
 }
-/**
- * 去掉解析到同一物理目录的重复根（Windows 上按大小写不敏感比较）。
- *
- * 当项目根本身就是 dsh home 的父目录时（例如 cwd == home），`.dsh/skills`
- * 与全局根会是同一目录，此时保留先出现的条目——即项目分类优先。
- */
-export declare function dedupeRoots(roots: ManagedRoot[]): ManagedRoot[];
-/** 收集一个工作区（项目 + 全局）的所有可写根目录。 */
-export declare function writableRoots(cwd: string | undefined, deps?: ManagerDeps): ManagedRoot[];
+/** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
+export declare function isGlobalSource(source: SkillSummaryView["source"]): boolean;
 /**
  * 构建 `ctx.capabilityPanel.skills` 服务。`ctx` 提供 registry（`ctx.skills`）
  * 供合并读目录使用（本实现中的 list 直接读盘，registry 调用由外部面板
@@ -43,7 +37,7 @@ export declare function writableRoots(cwd: string | undefined, deps?: ManagerDep
 export declare function createService(ctx: any, config?: {
     dshHome?: string;
     agentsHome?: string;
-}): {
+}, overrides?: OverridesManager): {
     list: (cwd?: string) => Promise<SkillSummaryView[]>;
     /** 创建 skill（scope / target / cwd 未给时按 project + .dsh 解析根）。 */
     create(input: {

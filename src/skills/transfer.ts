@@ -199,6 +199,9 @@ export interface ExportToPathOptions {
  * 覆盖时报错；覆盖时先清掉旧条目（文件或目录）再复制。
  */
 export async function exportToPath(options: ExportToPathOptions): Promise<TransferResult> {
+  if (!isSkillName(options.name)) {
+    return { ok: false, errors: [`invalid skill name "${options.name}"`] };
+  }
   const format = await detectFormat(options.root, options.name);
   if (format === undefined) return { ok: false, errors: [`skill "${options.name}" not found`] };
 
@@ -225,6 +228,9 @@ export async function exportToPath(options: ExportToPathOptions): Promise<Transf
  * （相对路径 posix 化）。
  */
 export async function exportSkillFiles(root: string, name: string): Promise<TransferResult> {
+  if (!isSkillName(name)) {
+    return { ok: false, errors: [`invalid skill name "${name}"`] };
+  }
   const format = await detectFormat(root, name);
   if (format === undefined) return { ok: false, errors: [`skill "${name}" not found`] };
 

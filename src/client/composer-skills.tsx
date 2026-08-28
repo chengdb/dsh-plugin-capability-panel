@@ -25,73 +25,46 @@
  * props；写入只调 `inputActions.setDraft(完整新草稿)`（输入机的唯一公开
  * 写路径），读取用 `useInput((s) => s.draft)` 选择器订阅。
  *
- * 两个入口是两棵独立的 React 树，开合状态用模块级微存储共享（与
- * composer-mcp 同一模式）。按钮的"草稿含 skill 口令"状态随数据修订号
- * （打开弹层）与 owner props 的 input 快照（草稿每次编辑都会重渲染
- * 工具行）更新。
+ * 两个入口是两棵独立的 React 树，开合状态与**列表数据**用模块级存储共享
+ * （见 composer-common.ts）：弹层打开时拉取 skill 列表并写回存储的数据槽，
+ * 按钮直接从数据槽派生"草稿含口令"状态，避免两棵树各拉一次同一份列表。
+ * 按钮的"草稿含 skill 口令"状态随数据修订号（打开弹层）与 owner props 的
+ * input 快照（草稿每次编辑都会重渲染工具行）更新。
  *
  * @module @chengdb/capability-panel/client/composer-skills
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CapabilityPanelApi, ClientSkillSummary } from "./api.js";
+import { isProjectSource } from "./panel-common.js";
+import {
+  composerPopStyle,
+  createComposerStore,
+  useComposerData,
+  useComposerDismiss,
+  useComposerStore,
+  useWorkspaceLabel,
+} from "./composer-common.js";
 
 // ---------------------------------------------------------------------------
-// 模块级开合存储（按钮树与弹层树共享）
+// 模块级开合存储（按钮树与弹层树共享：开合状态 + 列表数据槽）
 // ---------------------------------------------------------------------------
 
-const listeners = new Set<() => void>();
-let openState = false;
-/** 数据修订号：每次打开弹层或工作区变化时递增，按钮与弹层据此重拉。 */
-let openToken = 0;
-/** 打开弹层时能力工具组的视口位置（右上角），弹层据此把右下角贴到按钮组右上角。 */
-let anchorRect: { right: number; top: number } | undefined;
-
-function emitChange(): void {
-  for (const listener of listeners) {
-    try {
-      listener();
-    } catch {
-      /* 单个监听器的失败不能影响其它监听器 */
-    }
-  }
-}
+const store = createComposerStore<ClientSkillSummary[]>();
 
 /** 切换（或显式设置）弹层开合；打开时 bump token 触发弹层重拉。 */
 export function setComposerSkillsOpen(open?: boolean): void {
-  const next = open ?? !openState;
-  if (next === openState) return;
-  openState = next;
-  if (next) openToken += 1;
-  emitChange();
+  store.setOpen(open);
 }
 
-/** 记录能力工具组的视口位置（在打开弹层前调用）；紧随的 setComposerSkillsOpen 会统一派发。 */
+/** 记录能力工具组的视口位置（在打开弹层前调用）。 */
 export function setComposerSkillsAnchor(rect: { right: number; top: number }): void {
-  anchorRect = { right: rect.right, top: rect.top };
-}
-
-/** 订阅开合状态（useState + 手动订阅，等价于 mini useSyncExternalStore）。 */
-function useComposerSkillsOpen(): { open: boolean; token: number; anchor: { right: number; top: number } | undefined } {
-  const [, force] = useState(0);
-  useEffect(() => {
-    const listener = () => force((n) => n + 1);
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-  return { open: openState, token: openToken, anchor: anchorRect };
+  store.setAnchor(rect);
 }
 
 // ---------------------------------------------------------------------------
 // 共享小工具
 // ---------------------------------------------------------------------------
-
-/** source 是否属于"项目系"（与 panel.tsx 的口径一致：决定分组归属）。 */
-function isProjectSource(source: string): boolean {
-  return source === "project-dsh" || source === "project-agents" || source === "custom";
-}
 
 /** skill 名转正则字面量（kebab-case 本无需转义，防御未来命名放宽）。 */
 function escapeRegExp(text: string): string {
@@ -99,15 +72,15 @@ function escapeRegExp(text: string): string {
 }
 
 /**
- * 合并去重后的 user-invocable skill 名列表。同名条目按列表顺序取第一个
- * （roots 顺序即优先级：项目根在前、用户根在后），与宿主合并视图的
- * 赢者口径一致。
+ * 合并去重后的 user-invocable skill 列表（项目级禁用的全局 skill 一并
+ * 排除——在本项目里它们不可见）。同名条目按列表顺序取第一个（roots 顺序即
+ * 优先级：项目根在前、用户根在后），与宿主合并视图的赢者口径一致。
  */
 function invocableSkills(list: ClientSkillSummary[]): ClientSkillSummary[] {
   const seen = new Set<string>();
   const result: ClientSkillSummary[] = [];
   for (const item of list) {
-    if (!item.userInvocable || seen.has(item.name)) continue;
+    if (!item.userInvocable || item.disabledInProject === true || seen.has(item.name)) continue;
     seen.add(item.name);
     result.push(item);
   }
@@ -147,35 +120,40 @@ function BoltIcon({ filled }: { filled: boolean }) {
 /**
  * 闪电图标按钮：点击开合弹层。草稿不含已知 `/skill` 口令时空心描边
  * （中性灰）；含已知口令时实心填充绿色（成功色，skp-composer-btn-active）。
- * skill 名列表随数据修订号与工作区变化重拉；草稿来自 owner props 的
- * InputZone input 快照（工具行随输入机状态重渲染，无需自行订阅）。
+ * skill 名列表读弹层写回的数据槽（按钮不再各自拉取同一份列表）；数据槽
+ * 在挂载/工作区切换后由按钮兜底拉一次，弹层打开后由弹层负责刷新。
+ * 草稿来自 owner props 的 InputZone input 快照（工具行随输入机状态重渲染，
+ * 无需自行订阅）。
  */
 export function ComposerSkillsButton({ api, draft }: { api: CapabilityPanelApi; draft: string }) {
-  const { open, token } = useComposerSkillsOpen();
-  const [names, setNames] = useState<string[]>([]);
-  const [workspace, setWorkspace] = useState<string>(() => api.workspaceLabel());
+  const state = useComposerStore(store);
+  const workspace = useWorkspaceLabel(api);
+  const list = useComposerData(state, workspace);
+  const names = useMemo(() => (list === undefined ? [] : invocableSkills(list).map((s) => s.name)), [list]);
 
-  useEffect(() => api.subscribeWorkspace(() => setWorkspace(api.workspaceLabel())), [api]);
-
+  // 弹层打开时由弹层拉取并写回数据槽；按钮只在弹层关闭且数据槽过期
+  // （挂载 / 工作区变化）时兜底拉一次，避免两棵树重复 RPC。
   useEffect(() => {
+    if (state.open) return;
+    if (store.isFresh(workspace)) return;
     let cancelled = false;
     api.skills
       .list()
-      .then((list) => {
-        if (!cancelled) setNames(invocableSkills(list).map((s) => s.name));
+      .then((fresh) => {
+        if (!cancelled) store.setData(workspace, fresh);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [api, token, workspace]);
+  }, [api, state.open, state.token, workspace]);
 
   const active = useMemo(() => draftHasSkill(draft, names), [draft, names]);
 
   const className = [
     "skp-composer-btn",
     "skp-composer-btn-skills",
-    open ? "skp-composer-btn-open" : "",
+    state.open ? "skp-composer-btn-open" : "",
     active ? "skp-composer-btn-active" : "",
   ]
     .filter(Boolean)
@@ -187,7 +165,7 @@ export function ComposerSkillsButton({ api, draft }: { api: CapabilityPanelApi; 
       className={className}
       title="Skills"
       aria-label="Skills"
-      aria-expanded={open}
+      aria-expanded={state.open}
       onClick={(event) => {
         // 以整个能力工具组为锚（右下角贴按钮组右上角），三个弹层共用同一锚点。
         const group = event.currentTarget.closest(".skp-composer-tools");
@@ -215,8 +193,8 @@ interface InputActionsFace {
 /**
  * Skills 快捷输入弹层：按 当前项目/全局 分组列出 user-invocable 的 skill，
  * 顶部一个过滤输入框；点击某行把 `/name ` 追加进草稿并关闭弹层。
- * 打开时重拉列表；Esc 或点击弹层外部关闭（捕获阶段 pointerdown，只关闭、
- * 不拦截该次点击）。
+ * 打开时重拉列表（并写回数据槽供按钮复用）；Esc 或点击弹层外部关闭
+ * （捕获阶段 pointerdown，只关闭、不拦截该次点击）。
  */
 export function ComposerSkillsOverlay({
   api,
@@ -227,20 +205,20 @@ export function ComposerSkillsOverlay({
   useInput?: UseInputHook;
   inputActions?: InputActionsFace;
 }) {
-  const { open, token, anchor } = useComposerSkillsOpen();
+  const state = useComposerStore(store);
+  const workspace = useWorkspaceLabel(api);
   const [skills, setSkills] = useState<ClientSkillSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
-  const [workspace, setWorkspace] = useState<string>(() => api.workspaceLabel());
   const popRef = useRef<HTMLDivElement>(null);
 
-  // 项目作用域（.dsh/skills 等）跟随当前工作区或面板里的钉选。
-  useEffect(() => api.subscribeWorkspace(() => setWorkspace(api.workspaceLabel())), [api]);
+  // Esc 关闭 + 点击弹层外部关闭（捕获阶段只关闭、不拦截该次点击）。
+  useComposerDismiss(store, state.open, popRef, ".skp-composer-btn-skills");
 
   // 每次打开（token 变化）或工作区变化时重拉列表；关闭时清空过滤词。
   useEffect(() => {
-    if (!open) {
+    if (!state.open) {
       setQuery("");
       return;
     }
@@ -250,7 +228,11 @@ export function ComposerSkillsOverlay({
     api.skills
       .list()
       .then((list) => {
-        if (!cancelled) setSkills(invocableSkills(list));
+        if (!cancelled) {
+          // 写回数据槽：按钮直接消费这份列表，不再各自拉取。
+          store.setData(workspace, list);
+          setSkills(invocableSkills(list));
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(String(err));
@@ -261,40 +243,13 @@ export function ComposerSkillsOverlay({
     return () => {
       cancelled = true;
     };
-  }, [api, open, token, workspace]);
+  }, [api, state.open, state.token, workspace]);
 
-  // Esc 关闭弹层。
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setComposerSkillsOpen(false);
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  // 点击弹层外部关闭：捕获阶段的 pointerdown 只关弹层、不拦截事件
-  // （不用全屏遮罩，该次点击照常落到目标元素上）。落在弹层内部或本触发
-  // 按钮上的点击不处理——按钮自身的 onClick 负责开合切换；点其它按钮
-  // （如 MCP 按钮）时弹层照常关闭且该次点击立即生效。
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (popRef.current?.contains(target) === true) return;
-      if (target instanceof Element && target.closest(".skp-composer-btn-skills") !== null) return;
-      setComposerSkillsOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [open]);
-
-  if (!open) return null;
+  if (!state.open) return null;
 
   return (
     <SkillsPop
-      anchor={anchor}
+      anchor={state.anchor}
       popRef={popRef}
       skills={skills}
       loading={loading}
@@ -401,22 +356,7 @@ function SkillsPop({
       className="skp-composer-pop skp-composer-pop-skills"
       role="dialog"
       aria-label="Skills"
-      style={
-        anchor === undefined
-          ? undefined
-          : {
-              position: "fixed",
-              // 必须显式解除 .skp-composer-pop 兜底定位的 left:0：fixed + 定宽
-              // 弹层若同时带 left 与 right 属于过度约束，LTR 下浏览器忽略 right、
-              // 采用 left，会把弹层钉死在视口左缘（盖住侧边栏）。
-              left: "auto",
-              // 钳制右偏移：极窄视口（按钮组右缘距视口右缘超过 内宽-288）时
-              // 保证弹层左缘不溢出视口左缘（280 = .skp-composer-pop 定宽）。
-              right: Math.min(window.innerWidth - anchor.right, Math.max(8, window.innerWidth - 280 - 8)),
-              bottom: window.innerHeight - anchor.top + 4,
-              maxHeight: Math.max(120, Math.min(320, anchor.top - 12)),
-            }
-      }
+      style={composerPopStyle(anchor)}
     >
       <div className="skp-composer-head">
         <span className="skp-composer-title">Skills</span>

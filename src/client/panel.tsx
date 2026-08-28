@@ -20,7 +20,7 @@ import { McpView } from "./mcp-panel.js";
 import { QuickMessagesPanel } from "./quick-messages-panel.js";
 import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
-import { SCOPE_LABEL } from "./scope-tabs.js";
+import { hasWorkspaceLabel, isProjectSource, ProjectOverrideButton, ScopeTabs, useAsyncList } from "./panel-common.js";
 import type { ScopeTab } from "./scope-tabs.js";
 import { locateSkillRoot, rerootEntries, stripCommonTopFolder } from "../shared/skill-locate.js";
 import { unzip } from "./unzip.js";
@@ -121,11 +121,11 @@ export function CapabilityPanel({ api, onClose }: { api: CapabilityPanelApi; onC
       </header>
 
       {domain === "skills" ? (
-        <SkillsView api={api.skills} workspace={workspace} />
+        <SkillsView api={api} workspace={workspace} />
       ) : domain === "mcp" ? (
-        <McpView api={api.mcp} workspace={workspace} />
+        <McpView api={api} workspace={workspace} />
       ) : (
-        <QuickMessagesPanel api={api.quickMessages} workspace={workspace} />
+        <QuickMessagesPanel api={api} workspace={workspace} />
       )}
     </section>
   );
@@ -200,40 +200,18 @@ export function CapabilitiesFooterAction({ api, wide }: { api: CapabilityPanelAp
 /**
  * Skills 视图：作用域 Tab（All/Project/Global）+ 搜索 + 安装入口 + 列表 + 详情。
  * 列表来自宿主受管根目录的磁盘视图；安装/导出/移除后通过 refreshKey 重拉。
+ * 全局条目在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可恢复）。
  */
-function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) {
+function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: string }) {
+  const skillsApi = api.skills;
   const [tab, setTab] = useState<ScopeTab>("all");
   const [query, setQuery] = useState("");
-  const [items, setItems] = useState<ClientSkillSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<string | undefined>(undefined);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [installOpen, setInstallOpen] = useState(false);
 
   // 挂载时、工作区变化时（项目作用域列表依赖该 cwd 解析）、写操作后重新拉取。
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(undefined);
-    api
-      .list()
-      .then((list) => {
-        if (cancelled) return;
-        setItems(list);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api, workspace, refreshKey]);
-
-  const reload = () => setRefreshKey((key) => key + 1);
+  const { data: allItems, loading, error, reload } = useAsyncList(() => skillsApi.list(), [skillsApi, workspace]);
+  const items = allItems ?? [];
 
   // 过滤：作用域（project 由 source 判定） + 搜索词（命中 name 或 description）。
   const visible = useMemo(() => {
@@ -250,19 +228,7 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
   return (
     <div className="skp-domain">
       <div className="skp-subheader">
-        <div className="skp-tabs" role="tablist">
-          {(["all", "project", "global"] as ScopeTab[]).map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              className={tab === t ? "skp-tab skp-tab-active" : "skp-tab"}
-              onClick={() => setTab(t)}
-            >
-              {SCOPE_LABEL[t]}
-            </button>
-          ))}
-        </div>
+        <ScopeTabs value={tab} onChange={setTab} />
         <input
           className="skp-search"
           type="search"
@@ -287,15 +253,19 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                   onClick={() => setSelected(skillRowKey(item))}
                 >
                   <span className="skp-row-name">
-                    {/* 启用状态圆点（与 MCP 面板同一控件族）：启用绿 / 禁用灰。 */}
+                    {/* 状态圆点（与 MCP / 快捷消息同一控件族、同一语义）：
+                        全局已禁用恒灰；仅全局启用时区分本项目禁用（橙）/
+                        正常启用（绿）。 */}
                     <span
-                      className={`skp-dot ${isSkillEnabled(item) ? "skp-dot-enabled" : ""}`}
+                      className={`skp-dot ${!isSkillEnabled(item) ? "" : item.disabledInProject === true ? "skp-dot-project-disabled" : "skp-dot-enabled"}`}
                       title={
-                        item.readOnly
-                          ? "只读条目"
-                          : isSkillEnabled(item)
-                            ? "已启用（模型与用户均可调用）"
-                            : "已禁用（用户与模型都不可调用）"
+                        !isSkillEnabled(item)
+                          ? "已禁用（用户与模型都不可调用）"
+                          : item.disabledInProject === true
+                            ? "本项目禁用（全局仍启用）"
+                            : item.readOnly
+                              ? "只读条目"
+                              : "已启用（模型与用户均可调用）"
                       }
                     />
                     {item.name}
@@ -315,6 +285,8 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
                     )}
                     {/* 禁用的可写条目再标一个"已禁用"标签（与 MCP 行一致）。 */}
                     {!item.readOnly && !isSkillEnabled(item) && <span className="skp-tag skp-tag-readonly">已禁用</span>}
+                    {/* 全局条目被当前项目在项目级声明禁用时的标记。 */}
+                    {item.disabledInProject === true && <span className="skp-tag skp-tag-project-disabled">本项目禁用</span>}
                   </span>
                   <span className="skp-row-desc">{item.description}</span>
                 </button>
@@ -327,7 +299,9 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
               <SkillDetail
                 key={skillRowKey(selectedItem)}
                 summary={selectedItem}
-                api={api}
+                api={skillsApi}
+                overrides={api.overrides}
+                hasWorkspace={hasWorkspaceLabel(workspace)}
                 // 启用/禁用：skill 仍存在，保留选中并重拉列表（详情随新摘要刷新）。
                 onChanged={() => reload()}
                 // 移除：条目已不存在，清空选中再重拉。
@@ -345,8 +319,8 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
 
       {installOpen && (
         <InstallDialog
-          api={api}
-          hasWorkspace={workspace !== undefined && workspace !== "（无工作区）"}
+          api={skillsApi}
+          hasWorkspace={hasWorkspaceLabel(workspace)}
           onClose={() => setInstallOpen(false)}
           onInstalled={() => {
             setInstallOpen(false);
@@ -358,9 +332,9 @@ function SkillsView({ api, workspace }: { api: SkillsApi; workspace?: string }) 
   );
 }
 
-/** source 是否属于"项目系"（决定 scope 标签与 Tab 归属）。 */
-function isProjectSource(source: string): boolean {
-  return source === "project-dsh" || source === "project-agents" || source === "custom";
+/** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
+function isGlobalSource(source: string): boolean {
+  return source === "user-dsh" || source === "user-agents";
 }
 
 /** 整体启用态 = 模型与用户两种调用都开着（与详情卡开关同一口径）。 */
@@ -380,8 +354,11 @@ function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string 
 }
 
 /**
- * 详情卡片：元信息 + 路径 + 写操作（启用/禁用开关、导出下载、
+ * 详情卡片：元信息 + 路径 + 写操作（启用/禁用状态按钮、导出下载、
  * 导出到宿主路径、移除）。只读条目（custom / bundled）只展示徽标，不提供操作。
+ * 状态按钮的文字与颜色随状态变化：全局行有工作区时是两个按钮——
+ * 「全局已启用/全局已禁用」管全局配置，「项目已启用/项目已禁用」
+ * 管项目级覆写（写 `.dsh/capability-overrides.json`，不动全局配置）。
  *
  * 组件以 `key={source:name}` 挂载（见 SkillsView），切换选中行即整体重挂，
  * 因此确认态/错误态不需要手动随行切换重置。
@@ -389,11 +366,16 @@ function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string 
 function SkillDetail({
   summary,
   api,
+  overrides,
+  hasWorkspace,
   onChanged,
   onRemoved,
 }: {
   summary: ClientSkillSummary;
   api: SkillsApi;
+  overrides: CapabilityPanelApi["overrides"];
+  /** 面板是否附着在可写工作区上（项目级禁用需要 cwd）。 */
+  hasWorkspace: boolean;
   /** 条目内容已变化（如启用/禁用）：保留选中，重拉列表即可。 */
   onChanged: () => void;
   /** 条目已删除：应清空选中。 */
@@ -475,41 +457,86 @@ function SkillDetail({
 
   /** 整体启用态 = 模型与用户两种调用都开着（任一被关即视为已禁用）。 */
   const enabled = summary.modelInvocable && summary.userInvocable;
+  const isGlobal = isGlobalSource(summary.source);
+  const projectDisabled = summary.disabledInProject === true;
+
+  /**
+   * 切换这个**全局** skill 在当前项目的禁用状态：写入项目级声明文件
+   * （.dsh/capability-overrides.json），不动全局配置；成功后重拉列表
+   * （标记与快捷弹层的可见性随之刷新）。
+   */
+  const doToggleProjectDisabled = async () => {
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await overrides.toggle("skills", summary.name);
+      if (!result.ok) {
+        setOpError(result.errors.join("; "));
+        return;
+      }
+      onChanged();
+    } catch (error) {
+      setOpError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="skp-detail-card">
-      {/* 头部：标题 + 操作按钮（置于右上角，避免操作沉底难找）。 */}
+      {/* 头部：标题（只读条目附徽标）；操作按钮单独占一行，置于标题之下。 */}
       <div className="skp-detail-head">
         <h3>{summary.name}</h3>
-        {summary.readOnly ? (
-          <span className="skp-badge">只读</span>
-        ) : (
-          <div className="skp-detail-actions">
-            {/* 一键启用/禁用开关（与弹层快捷开关同一 skp-switch 控件族）。 */}
-            <span className="skp-detail-enable">
-              <label className="skp-switch" title={enabled ? "点击禁用（用户与模型都不可调用）" : "点击启用（恢复用户与模型调用）"}>
-                <input type="checkbox" checked={enabled} disabled={busy} onChange={(e) => void doSetEnabled(e.currentTarget.checked)} />
-                <span className="skp-switch-track" />
-              </label>
-              <span className="skp-detail-enable-label">{enabled ? "已启用" : "已禁用"}</span>
-            </span>
-            <button type="button" className="skp-btn" disabled={busy} onClick={doExportDownload}>
-              导出
-            </button>
-            <button type="button" className="skp-btn" disabled={busy} onClick={() => setExportPathOpen(true)}>
-              导出到路径…
-            </button>
-            <button
-              type="button"
-              className={confirmRemove ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"}
-              disabled={busy}
-              onClick={doRemove}
-            >
-              {confirmRemove ? "确认移除？" : "移除"}
-            </button>
-          </div>
-        )}
+        {summary.readOnly && <span className="skp-badge">只读</span>}
       </div>
+      {!summary.readOnly && (
+        <div className="skp-detail-actions">
+          {/* 启用/禁用状态按钮：只管条目自身配置；全局行带「全局」前缀，
+              与右侧的「本项目」按钮区分开。 */}
+          <button
+            type="button"
+            className={`skp-btn ${enabled ? "skp-state-on" : "skp-state-off"}`}
+            disabled={busy}
+            title={
+              isGlobal
+                ? enabled
+                  ? "点击全局禁用（所有项目都不可调用）"
+                  : "点击全局启用（恢复所有项目可用）"
+                : enabled
+                  ? "点击禁用（用户与模型都不可调用）"
+                  : "点击启用（恢复用户与模型调用）"
+            }
+            onClick={() => void doSetEnabled(!enabled)}
+          >
+            {isGlobal ? (enabled ? "全局已启用" : "全局已禁用") : enabled ? "已启用" : "已禁用"}
+          </button>
+          {/* 项目级覆写按钮：只对有工作区的全局行渲染；绿=项目已启用，
+              橙=项目已禁用（写项目覆写文件，不动全局配置）；全局已禁用
+              时恒灰并禁用（本项目状态没有意义）。 */}
+          {hasWorkspace && isGlobal && (
+            <ProjectOverrideButton
+              globalEnabled={enabled}
+              projectDisabled={projectDisabled}
+              disabled={busy}
+              onToggle={() => void doToggleProjectDisabled()}
+            />
+          )}
+          <button type="button" className="skp-btn" disabled={busy} onClick={doExportDownload}>
+            导出
+          </button>
+          <button type="button" className="skp-btn" disabled={busy} onClick={() => setExportPathOpen(true)}>
+            导出到路径…
+          </button>
+          <button
+            type="button"
+            className={confirmRemove ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"}
+            disabled={busy}
+            onClick={doRemove}
+          >
+            {confirmRemove ? "确认移除？" : "移除"}
+          </button>
+        </div>
+      )}
       <dl className="skp-detail-fields">
         <dt>描述</dt>
         <dd>{summary.description}</dd>

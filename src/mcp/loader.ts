@@ -24,9 +24,11 @@
 
 import * as McpClient from "@deepseek-ai/dsh-mcp-client";
 
+import { errMessage } from "../shared/errors.js";
 import { findProjectRoot } from "../shared/project-root.js";
 import { readMcpFile, toClientConfig } from "./config-file.js";
 import { globalMcpFile, projectMcpFile } from "./paths.js";
+import type { OverridesManager } from "../overrides/manager.js";
 import type { McpServerEntry, McpStatusView } from "./types.js";
 
 /** 挂载器的构造依赖。 */
@@ -34,6 +36,8 @@ export interface McpLoaderDeps {
   dshHome?: string;
   /** 为 false 时不挂载任何 server（状态保持为空）。缺省 true。 */
   enabled?: boolean;
+  /** 项目级"全局能力禁用"管理器：解析项目配置时跳过被禁用的全局 server。 */
+  overrides?: OverridesManager;
 }
 
 /** 一条 server 在一个 session 内的挂载记录。 */
@@ -77,25 +81,32 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
   /**
    * 为某个工作区解析合并后的启用 server 列表：
    * 先全局后项目（同名键项目覆盖），最后过滤掉 disabled 条目。
+   * 传 cwd 时先应用该项目级"全局能力禁用"：被禁用的**全局** server 直接跳过
+   * （项目自身的同名条目不受影响，仍能覆盖挂载）。
    * 单个文件读失败只记 warn，不中断另一个文件。
    */
   async function resolveServers(cwd: string | undefined): Promise<Array<{ key: string; entry: McpServerEntry }>> {
     const globalFile = globalMcpFile(deps.dshHome);
+    // 项目级禁用的全局 server 键集合（无 cwd 或读取失败时为空集合）。
+    const disabledMcp = new Set((await deps.overrides?.sets(cwd))?.mcp ?? []);
     // 两个配置文件并行解析；单个文件读失败只记 warn，不中断另一个。
     const [globalServers, projectServers] = await Promise.all([
       readMcpFile(globalFile).catch((error) => {
-        logger.warn?.(`capability-panel: ${(error as Error).message}`);
+        logger.warn?.(`capability-panel: ${errMessage(error)}`);
         return {} as Record<string, McpServerEntry>;
       }),
       cwd !== undefined
         ? readMcpFile(projectMcpFile(cwd)).catch((error) => {
-            logger.warn?.(`capability-panel: ${(error as Error).message}`);
+            logger.warn?.(`capability-panel: ${errMessage(error)}`);
             return {} as Record<string, McpServerEntry>;
           })
         : Promise.resolve({} as Record<string, McpServerEntry>),
     ]);
     const merged = new Map<string, McpServerEntry>();
-    for (const [key, entry] of Object.entries(globalServers)) merged.set(key, entry);
+    for (const [key, entry] of Object.entries(globalServers)) {
+      if (disabledMcp.has(key)) continue;
+      merged.set(key, entry);
+    }
     for (const [key, entry] of Object.entries(projectServers)) merged.set(key, entry);
     return [...merged.entries()]
       .filter(([, entry]) => entry.disabled !== true)
@@ -112,13 +123,8 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
     const previous = record.fibers;
     record.fibers = [];
     record.mounts = [];
-    for (const fiber of previous) {
-      try {
-        await fiber.dispose();
-      } catch {
-        /* 单个 fiber 的释放失败不能挡住新一代挂载 */
-      }
-    }
+    // 上一代 fiber 并联释放（各 fiber 独立，失败不挡住新一代挂载）。
+    await Promise.all(previous.map((fiber) => fiber.dispose().catch(() => undefined)));
     if (!enabled) return;
     const servers = await resolveServers(record.cwd);
     for (const { key, entry } of servers) {
