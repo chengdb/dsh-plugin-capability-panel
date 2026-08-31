@@ -126,7 +126,7 @@ export function useComposerStore<T>(store: ComposerStoreApi<T>): ComposerStoreSt
 }
 
 /**
- * 项目作用域（.dsh/skills 等）跟随当前工作区或面板里的钉选：
+ * 项目作用域（.agents/skills、.mcp.json 等）跟随当前工作区或面板里的钉选：
  * 订阅工作区变化并触发重渲染（数据源是 SnapshotStore，本身不具备响应性）。
  */
 export function useWorkspaceLabel(api: CapabilityPanelApi): string {

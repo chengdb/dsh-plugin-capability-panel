@@ -17,9 +17,11 @@
 /** 本版本支持的两个可写作用域（custom / bundled 保持只读）。 */
 export type WritableScope = "project" | "global";
 /** registry 已知的完整来源集合（rank 100..600）。 */
-export type SkillSource = "project-dsh" | "project-agents" | "custom" | "user-dsh" | "user-agents" | "bundled";
-/** 项目 skill 所在的物理子目录。 */
-export type ProjectTargetDir = ".dsh" | ".agents";
+export type SkillSource = "project-dsh" | "project-agents" | "custom" | "user-dsh" | "user-agents" | "bundled"
+/** 只读兼容根：Claude Code 生态的项目/全局技能目录（见 skills/roots.ts）。 */
+ | "project-claude" | "user-claude";
+/** 项目 skill 所在的物理子目录（.claude 为只读兼容根，见 skills/manager.ts）。 */
+export type ProjectTargetDir = ".dsh" | ".agents" | ".claude";
 /** 磁盘上扁平的调用策略键（两者都可省略；省略视为启用）。 */
 export interface InvocationFrontmatter {
     "disable-model-invocation"?: boolean;

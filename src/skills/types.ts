@@ -25,10 +25,13 @@ export type SkillSource =
   | "custom"
   | "user-dsh"
   | "user-agents"
-  | "bundled";
+  | "bundled"
+  /** 只读兼容根：Claude Code 生态的项目/全局技能目录（见 skills/roots.ts）。 */
+  | "project-claude"
+  | "user-claude";
 
-/** 项目 skill 所在的物理子目录。 */
-export type ProjectTargetDir = ".dsh" | ".agents";
+/** 项目 skill 所在的物理子目录（.claude 为只读兼容根，见 skills/manager.ts）。 */
+export type ProjectTargetDir = ".dsh" | ".agents" | ".claude";
 
 /** 磁盘上扁平的调用策略键（两者都可省略；省略视为启用）。 */
 export interface InvocationFrontmatter {

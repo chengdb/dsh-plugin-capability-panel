@@ -3,7 +3,8 @@
  *
  * 三个域（skills / quickMessages / mcp）的列表读取与 MCP 自动挂载共用它的
  * `sets()` 快照得到"本项目禁用了哪些全局条目"；面板通过 `get()` 读全量、
- * `toggle()` 切换某一条的禁用状态（写 `.dsh/capability-overrides.json`）。
+ * `toggle()` 切换某一条的禁用状态（写 `.agents/capability-overrides.json`，
+ * 读取兼容旧位置 `.dsh` / `.claude`，首次写入时并入并删除旧文件）。
  *
  * 无工作区（cwd 为 undefined）时不适用任何项目级禁用：`sets()` 返回全空
  * 快照，`toggle()` 直接报错。
@@ -13,8 +14,9 @@
 
 import { findProjectRoot } from "../shared/project-root.js";
 import { withFileLock } from "../shared/file-lock.js";
+import { locateConfigFile, removeFiles, type ConfigFileLocation } from "../shared/config-location.js";
 import { DOMAIN_KEYS, normalizeList, readOverrides, writeOverrides } from "./config-file.js";
-import { projectOverridesFile } from "./paths.js";
+import { OVERRIDES_FILE_NAME, projectOverridesDirs } from "./paths.js";
 import type { CapabilityDomain, OverridesSet, OverridesView } from "./types.js";
 
 /** 管理服务的构造依赖。 */
@@ -36,10 +38,10 @@ export type OverrideOpResult = { ok: true } | { ok: false; errors: string[] };
 
 /** 创建管理服务。 */
 export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
-  /** 本项目管理器的目标声明文件（cwd 缺省时返回 undefined）。 */
-  function fileFor(cwd?: string): string | undefined {
+  /** 本项目管理器的声明文件定位结果（cwd 缺省时返回 undefined）。 */
+  function locationFor(cwd?: string): ConfigFileLocation | undefined {
     if (cwd === undefined) return undefined;
-    return projectOverridesFile(cwd, findProjectRoot(cwd));
+    return locateConfigFile(projectOverridesDirs(cwd, findProjectRoot(cwd)), OVERRIDES_FILE_NAME);
   }
 
   /**
@@ -48,26 +50,28 @@ export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
    * 写路径（toggle）才会显式报错暴露问题。
    */
   async function sets(cwd?: string): Promise<OverridesSet> {
-    const file = fileFor(cwd);
-    if (file === undefined) return normalizeOverrides(undefined);
+    const loc = locationFor(cwd);
+    if (loc === undefined) return normalizeOverrides(undefined);
     try {
-      return await readOverrides(file);
+      return await readOverrides(loc.readFile);
     } catch {
       return normalizeOverrides(undefined);
     }
   }
 
-  /** 读取全量视图（attach 声明文件路径；无工作区时返回空视图）。 */
+  /** 读取全量视图（attach 生效读取文件路径；无工作区时返回空视图）。 */
   async function get(cwd?: string): Promise<OverridesView> {
-    const file = fileFor(cwd);
+    const loc = locationFor(cwd);
     const view: OverridesView = { ...(await sets(cwd)) };
-    if (file !== undefined) view.filePath = file;
+    if (loc !== undefined) view.filePath = loc.readFile;
     return view;
   }
 
   /**
    * 切换某个全局能力在本项目的禁用状态：已在清单里则移除（恢复），否则
    * 加入（禁用）。读→改→写整段按文件串行化，避免并发写者互相覆盖。
+   * 读取走生效位置（可能是旧 `.dsh` / `.claude` 文件），写入固定落
+   * `.agents`；首次迁移时并入旧内容并删除旧文件。
    */
   async function toggle(input: OverrideToggleInput): Promise<OverrideOpResult> {
     const key = input.key.trim();
@@ -75,11 +79,11 @@ export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
     if (!DOMAIN_KEYS.includes(input.domain)) {
       return { ok: false, errors: [`unknown domain "${String(input.domain)}"`] };
     }
-    const file = fileFor(input.cwd);
-    if (file === undefined) return { ok: false, errors: ["project scope requires a workspace path"] };
+    const loc = locationFor(input.cwd);
+    if (loc === undefined) return { ok: false, errors: ["project scope requires a workspace path"] };
     try {
-      return await withFileLock(file, async () => {
-        const current = await readOverrides(file);
+      return await withFileLock(loc.writeFile, async () => {
+        const current = await readOverrides(loc.readFile);
         const next: OverridesSet = {
           skills: [...current.skills],
           quickMessages: [...current.quickMessages],
@@ -87,7 +91,8 @@ export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
         };
         const list = normalizeList(next[input.domain]);
         next[input.domain] = list.includes(key) ? list.filter((k) => k !== key) : [...list, key].sort((a, b) => a.localeCompare(b));
-        await writeOverrides(file, next);
+        await writeOverrides(loc.writeFile, next);
+        await removeFiles(loc.legacyFiles);
         return { ok: true };
       });
     } catch (error) {

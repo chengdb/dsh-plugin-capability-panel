@@ -334,7 +334,7 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
 
 /** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
 function isGlobalSource(source: string): boolean {
-  return source === "user-dsh" || source === "user-agents";
+  return source === "user-dsh" || source === "user-agents" || source === "user-claude";
 }
 
 /** 整体启用态 = 模型与用户两种调用都开着（与详情卡开关同一口径）。 */
@@ -358,7 +358,7 @@ function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string 
  * 导出到宿主路径、移除）。只读条目（custom / bundled）只展示徽标，不提供操作。
  * 状态按钮的文字与颜色随状态变化：全局行有工作区时是两个按钮——
  * 「全局已启用/全局已禁用」管全局配置，「项目已启用/项目已禁用」
- * 管项目级覆写（写 `.dsh/capability-overrides.json`，不动全局配置）。
+ * 管项目级覆写（写 `.agents/capability-overrides.json`，兼容旧位置 `.dsh`，不动全局配置）。
  *
  * 组件以 `key={source:name}` 挂载（见 SkillsView），切换选中行即整体重挂，
  * 因此确认态/错误态不需要手动随行切换重置。
@@ -462,7 +462,7 @@ function SkillDetail({
 
   /**
    * 切换这个**全局** skill 在当前项目的禁用状态：写入项目级声明文件
-   * （.dsh/capability-overrides.json），不动全局配置；成功后重拉列表
+   * （.agents/capability-overrides.json），不动全局配置；成功后重拉列表
    * （标记与快捷弹层的可见性随之刷新）。
    */
   const doToggleProjectDisabled = async () => {
@@ -598,7 +598,7 @@ type InstallMode = keyof typeof INSTALL_MODE;
  */
 function InstallDialog({ api, hasWorkspace, onClose, onInstalled }: { api: SkillsApi; hasWorkspace: boolean; onClose: () => void; onInstalled: () => void }) {
   const [mode, setMode] = useState<InstallMode>("upload");
-  const [scopeChoice, setScopeChoice] = useState<InstallScopeChoice>(hasWorkspace ? "project-dsh" : "global");
+  const [scopeChoice, setScopeChoice] = useState<InstallScopeChoice>(hasWorkspace ? "project-agents" : "global");
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -787,9 +787,9 @@ function InstallDialog({ api, hasWorkspace, onClose, onInstalled }: { api: Skill
             value={scopeChoice}
             ariaLabel="安装目标"
             options={[
-              { value: "project-dsh", label: "项目 — .dsh/skills", disabled: !hasWorkspace },
-              { value: "project-agents", label: "项目 — .agents/skills", disabled: !hasWorkspace },
-              { value: "global", label: "全局 — ~/.dsh/skills" },
+              { value: "project-agents", label: "项目 — .agents/skills（默认）", disabled: !hasWorkspace },
+              { value: "project-dsh", label: "项目 — .dsh/skills（旧）", disabled: !hasWorkspace },
+              { value: "global", label: "全局 — ~/.agents/skills" },
             ]}
             onChange={(value) => setScopeChoice(value as InstallScopeChoice)}
           />

@@ -26,7 +26,7 @@ export function hasWorkspaceLabel(workspace: string | undefined): boolean {
 
 /** source 是否属于"项目系"（决定 scope 标签与 Tab 归属）。 */
 export function isProjectSource(source: string): boolean {
-  return source === "project-dsh" || source === "project-agents" || source === "custom";
+  return source === "project-dsh" || source === "project-agents" || source === "project-claude" || source === "custom";
 }
 
 /** 作用域 Tab 行（三域视图头部共用，保证切换 Tab 的 UI 与文案完全一致）。 */

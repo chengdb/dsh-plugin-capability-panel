@@ -2,8 +2,9 @@
  * 传输无关的 skills 域服务（挂载为 `ctx.capabilityPanel.skills`）。
  *
  * 读取走两条路：
- *   - **可写磁盘视图**（项目 + 全局根目录，直接读盘以拿到 path/format/readOnly
- *     等管理列表需要的信息）；
+ *   - **受管磁盘视图**（项目 + 全局根目录，直接读盘以拿到 path/format/readOnly
+ *     等管理列表需要的信息；`.agents` 为写入目标根，`.dsh` 为旧位置兼容根，
+ *     `.claude` 为只读兼容根）；
  *   - **合并 registry 目录**（`ctx.skills.list({ cwd })`）里的只读条目
  *     （custom / bundled / 第三方 provider）。
  *
@@ -13,7 +14,7 @@
  */
 
 import { findProjectRoot } from "../shared/project-root.js";
-import { globalSkillsDir, projectSkillsDir, userAgentsSkillsDir } from "./roots.js";
+import { globalSkillsDir, projectSkillsDir, userAgentsSkillsDir, userClaudeSkillsDir } from "./roots.js";
 import { readSkill, resourceDirectory, skillFilePath } from "./disk.js";
 import { createSkill, updateSkill, removeSkill, setSkillEnabled, readSkillDetail, listSkillEntries } from "./crud.js";
 import { installFromUrl } from "./download.js";
@@ -29,9 +30,9 @@ export interface ManagerDeps {
   agentsHome?: string;
 }
 
-/** 一个具体的可写 skill 根及其来源分类。 */
+/** 一个受管 skill 根及其来源分类（claude 系为只读兼容根）。 */
 export interface ManagedRoot {
-  source: "user-dsh" | "user-agents" | "project-dsh" | "project-agents";
+  source: "user-dsh" | "user-agents" | "project-dsh" | "project-agents" | "user-claude" | "project-claude";
   path: string;
 }
 
@@ -51,26 +52,33 @@ function dedupeRoots(roots: ManagedRoot[]): ManagedRoot[] {
   });
 }
 
-/** 收集一个工作区（项目 + 全局）的所有可写根目录。 */
-function writableRoots(cwd: string | undefined, deps: ManagerDeps = {}): ManagedRoot[] {
+/** 收集一个工作区（项目 + 全局）的所有受管根目录（.dsh/.agents/.claude）。 */
+function managedRoots(cwd: string | undefined, deps: ManagerDeps = {}): ManagedRoot[] {
   const roots: ManagedRoot[] = [];
   if (cwd !== undefined) {
     const projectRoot = findProjectRoot(cwd);
     roots.push(
       { source: "project-dsh", path: projectSkillsDir(cwd, ".dsh", projectRoot) },
       { source: "project-agents", path: projectSkillsDir(cwd, ".agents", projectRoot) },
+      { source: "project-claude", path: projectSkillsDir(cwd, ".claude", projectRoot) },
     );
   }
   roots.push(
     { source: "user-dsh", path: globalSkillsDir(deps.dshHome) },
     { source: "user-agents", path: userAgentsSkillsDir(deps.agentsHome) },
+    { source: "user-claude", path: userClaudeSkillsDir() },
   );
   return roots;
 }
 
 /** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
 export function isGlobalSource(source: SkillSummaryView["source"]): boolean {
-  return source === "user-dsh" || source === "user-agents";
+  return source === "user-dsh" || source === "user-agents" || source === "user-claude";
+}
+
+/** claude 系来源是只读兼容根（面板展示但不可写回）。 */
+function isReadOnlySource(source: SkillSummaryView["source"]): boolean {
+  return source === "project-claude" || source === "user-claude";
 }
 
 /**
@@ -91,7 +99,7 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
    * 客户端再过滤掉它们）。
    */
   async function list(cwd?: string): Promise<SkillSummaryView[]> {
-    const roots = dedupeRoots(writableRoots(cwd, deps));
+    const roots = dedupeRoots(managedRoots(cwd, deps));
     // 项目级禁用的全局 skill 名集合（无 cwd 或读取失败时为空集合）。
     const disabledSkills = new Set((await overrides?.sets(cwd))?.skills ?? []);
     // 每个根目录内的读取并行（一次 readdir 拿名称+布局，再并发读文件），
@@ -99,6 +107,7 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
     const views: SkillSummaryView[] = [];
     for (const root of roots) {
       const entries = await listSkillEntries(root.path);
+      const readOnly = isReadOnlySource(root.source);
       const loaded = await Promise.all(
         entries.map(async ({ name, format }) => {
           const parsed = await readSkill(root.path, name, format);
@@ -110,7 +119,7 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
             invocationPolicy(parsed.spec.invocation),
             root.source,
             format,
-            false,
+            readOnly,
             skillFilePath(root.path, name, format),
             format === "directory" ? resourceDirectory(root.path, name) : undefined,
             root.path,
@@ -128,17 +137,18 @@ export function createService(ctx: any, config: { dshHome?: string; agentsHome?:
 
   /**
    * 从作用域 + 工作区解析一个具体的根目录供宿主侧写入：
-   * global 固定用全局根；project 需要 cwd，缺省目标子目录为 .dsh。
+   * global 固定用 `~/.agents/skills`（user-agents，首选）；project 需要 cwd，
+   * 缺省目标子目录为 .agents。
    */
   function resolveRoot(scope: WritableScope, cwd: string | undefined, target: ".dsh" | ".agents" | undefined): string {
-    if (scope === "global") return globalSkillsDir(deps.dshHome);
+    if (scope === "global") return userAgentsSkillsDir(deps.agentsHome);
     if (cwd === undefined) throw new Error("project scope requires a workspace path");
-    return projectSkillsDir(cwd, target ?? ".dsh");
+    return projectSkillsDir(cwd, target ?? ".agents");
   }
 
   return {
     list,
-    /** 创建 skill（scope / target / cwd 未给时按 project + .dsh 解析根）。 */
+    /** 创建 skill（scope / target / cwd 未给时按 project + .agents 解析根）。 */
     async create(input: { root?: string; scope?: WritableScope; target?: ".dsh" | ".agents"; cwd?: string; format: SkillFormat; spec: unknown; body: string; overwrite?: boolean }) {
       const root = input.root ?? resolveRoot(input.scope ?? "project", input.cwd, input.target);
       return createSkill({ root, format: input.format, spec: input.spec as never, body: input.body, overwrite: input.overwrite });

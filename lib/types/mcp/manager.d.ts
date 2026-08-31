@@ -13,6 +13,7 @@ import type { McpLoader } from "./loader.js";
 /** 管理服务的构造依赖。 */
 export interface McpManagerDeps {
     dshHome?: string;
+    agentsHome?: string;
 }
 /** 一次写操作的最小入参（scope + 目标文件定位）。 */
 export interface McpWriteInput {

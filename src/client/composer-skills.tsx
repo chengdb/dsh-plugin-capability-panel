@@ -432,7 +432,7 @@ function SkillsPop({
             <>
               未发现可输入的 skill。
               <br />
-              在项目 <code>.dsh/skills</code> 或全局 <code>~/.dsh/skills</code> 中添加，或在能力面板中安装。
+              在项目 <code>.agents/skills</code> 或全局 <code>~/.agents/skills</code> 中添加，或在能力面板中安装。
             </>
           ) : (
             "没有匹配项。"

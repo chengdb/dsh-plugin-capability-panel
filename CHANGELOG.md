@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **配置文件位置改为 `.agents` 优先**：所有可写配置（项目级能力禁用声明、
+  项目/全局快捷消息、全局 MCP、skills 安装目标）保存时优先写入 `.agents`
+  目录（项目 `<项目根>/.agents/`，全局 `~/.agents/`）；读取兼容旧位置
+  （项目 `.dsh` / `.claude`，全局 dsh home / `~/.claude`）。首次写入新位置
+  时自动并入旧文件内容并删除旧文件，旧配置不丢失、不留两份。
+- **Skills 只读兼容 `.claude/skills`**：项目与全局的 Claude Code 技能目录
+  出现在面板中（只读徽标，不可写回）；skills 默认安装目标改为 `.agents`
+  （项目）与 `~/.agents/skills`（全局）。
+- **项目根判定标记新增 `.agents` 与 `.claude`**：与 `.git` / `.dsh` 同等
+  参与 `findProjectRoot` 的向上探测（主目录护栏不变）。
+
 ## [0.8.0] - 2026-08-28
 
 ### 新增

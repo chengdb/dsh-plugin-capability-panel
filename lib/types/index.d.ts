@@ -11,8 +11,8 @@
  *     - `overrides`：项目级"全局能力禁用"声明（见 `overrides/manager.ts`）——
  *       允许在单个项目里禁用指定的全局 skill / 快捷消息 / MCP server。
  *   - 通过 `mcp/loader.ts` 把配置好的 MCP server 自动挂载进每个存活 agent
- *     （全局 `~/.dsh/mcp.json` + 项目 `.mcp.json`，项目级禁用的全局 server
- *     跳过）。
+ *     （全局 `~/.agents/mcp.json`，兼容旧位置 `~/.dsh` / `~/.claude`；
+ *     + 项目 `.mcp.json`，项目级禁用的全局 server 跳过）。
  *   - 当存在 Web 端 `connection` 服务时，挂载插件自有的 RPC 通道
  *     `/capability-panel`，让 GUI 客户端能调用各域（见 `remote.ts`）。
  *

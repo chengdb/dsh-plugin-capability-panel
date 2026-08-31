@@ -14,6 +14,23 @@
 | **MCP 服务器** | ✅ 双作用域 + 实时挂载状态 | ✅ 表单新增（stdio/sse/http） | ✅ | ✅ 热重挂 + 项目级禁用全局项 | ✅ | ✅ `.mcp.json` 与 Claude Code 格式兼容 |
 | **快捷消息** | ✅ 双作用域 + 搜索 | ✅ 多行正文 | ✅ | ✅ 状态按钮 + 项目级禁用全局项 | ✅ | ✅ JSON 配置文件即数据 |
 
+## 配置文件位置
+
+本插件的配置文件**写入优先用 `.agents` 目录**，读取兼容旧位置与跨工具生态：
+
+| 配置 | 写入目标 | 读取兼容（旧位置） |
+|---|---|---|
+| 项目级能力禁用声明 | `<项目根>/.agents/capability-overrides.json` | `.dsh` → `.claude` |
+| 项目级快捷消息 | `<项目根>/.agents/quick-messages.json` | `.dsh` → `.claude` |
+| 全局 MCP 服务器 | `~/.agents/mcp.json` | `~/.dsh` → `~/.claude` |
+| 全局快捷消息 | `~/.agents/quick-messages.json` | `~/.dsh` → `~/.claude` |
+| Skills（项目/全局） | `.agents/skills`、`~/.agents/skills` | `.dsh/skills`（可写）、`.claude/skills`（只读展示） |
+| 项目 MCP 服务器 | `<项目根>/.mcp.json`（Claude Code 标准，位置不变） | — |
+
+首次写入新位置时，旧文件内容会自动**并入并删除**（不丢配置、不留两份）。
+`.agents` 与 `.dsh` 同时参与"项目根"判定（`.claude` 也纳入），换目录 / 换
+工具搬家都不会影响配置归属。
+
 ## 亮点
 
 ### 🗂 一个面板，管住三个能力域
@@ -58,8 +75,9 @@ store-only zip；也可以复制到宿主任意目录。
 ### 🔌 MCP：改配置即热挂载，不重启、不改 preset
 
 - 配置文件与 **Claude Code 的 `.mcp.json` 格式兼容**：项目级
-  `<projectRoot>/.mcp.json`，全局级 `<dshHome>/mcp.json`，同名 key
-  项目级覆盖全局级；`env`/`headers`/`args` 支持 `${VAR}` 环境变量插值。
+  `<projectRoot>/.mcp.json`，全局级 `~/.agents/mcp.json`（读取兼容旧位置
+  `~/.dsh/mcp.json`），同名 key 项目级覆盖全局级；`env`/`headers`/`args`
+  支持 `${VAR}` 环境变量插值。
 - host 插件监听 `agent/created`，把启用的 server 逐个挂进 agent 自己的
   Cordis context——工具以 `mcp__<serverName>__<tool>` 出现在**该 session
   内**，按 session 隔离，agent 销毁自动卸载。
@@ -72,8 +90,9 @@ store-only zip；也可以复制到宿主任意目录。
 
 ### 💬 快捷消息：常用提示词，一键入草稿、一键直发
 
-把高频提示词存成快捷消息（项目级 `.dsh/quick-messages.json` +
-全局 `<dshHome>/quick-messages.json`），面板里增删改、启停、搜索。
+把高频提示词存成快捷消息（项目级 `.agents/quick-messages.json` +
+全局 `~/.agents/quick-messages.json`，读取兼容旧位置 `.dsh` / `~/.dsh`），
+面板里增删改、启停、搜索。
 禁用的消息只从输入框弹层隐藏，配置仍然保留。
 
 ![面板：快捷消息域](docs/screenshots/panel-quick.png)
@@ -84,8 +103,8 @@ store-only zip；也可以复制到宿主任意目录。
 只想在当前项目里关掉，不必动全局配置：打开该条目的详情卡，点击
 **「项目已启用 / 项目已禁用」状态按钮**（绿=生效，橙=禁用）即可。
 
-- 声明写入项目级覆写文件 `<项目根>/.dsh/capability-overrides.json`，
-  全局配置原样保留，其他项目完全不受影响；
+- 声明写入项目级覆写文件 `<项目根>/.agents/capability-overrides.json`
+  （读取兼容旧位置 `.dsh`），全局配置原样保留，其他项目完全不受影响；
 - 效果真实生效：Skills / 快捷消息立刻从输入框弹层消失，MCP server 从
   本项目所有 session 里**热卸载**（恢复时自动重挂）；
 - 列表行用橙色圆点 + 「本项目禁用」标签标出，一眼可辨；
@@ -159,8 +178,8 @@ dsh plugin --profile web remove @chengdb/capability-panel
 ```
 
 移除后重新运行 `dsh web` 即可，侧栏入口与输入框工具组随之消失。卸载**不会**触碰
-你已经管理的任何数据——`.dsh/skills`、`.mcp.json`、`quick-messages.json`
-等文件全部原样保留，随时可重新安装接管。
+你已经管理的任何数据——`.agents/skills`（及旧位置 `.dsh/skills`）、`.mcp.json`、
+`quick-messages.json` 等文件全部原样保留，随时可重新安装接管。
 
 ## 本地开发
 
@@ -198,7 +217,7 @@ src/
   skills/         skills 域：磁盘读写、CRUD、安装/导出、URL 下载、校验
   mcp/            MCP 域：.mcp.json 读写、agent 自动挂载、写后热重挂
   quick-messages/ 快捷消息域：JSON 配置读写、CRUD
-  overrides/      项目级禁用域：.dsh/capability-overrides.json 读写、覆写切换
+  overrides/      项目级禁用域：.agents/capability-overrides.json 读写（兼容旧位置）、覆写切换
   client/         React 面板、三个 composer 弹层、zip 工具、自含样式
 ```
 

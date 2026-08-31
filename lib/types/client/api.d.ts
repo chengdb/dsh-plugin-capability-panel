@@ -255,7 +255,8 @@ export interface OverridesApi {
     get(): Promise<ClientOverrides>;
     /**
      * 切换某个**全局**能力在本项目的禁用状态：不在清单里 → 加入（禁用）；
-     * 已在清单里 → 移除（恢复）。落盘 `<项目根>/.dsh/capability-overrides.json`。
+     * 已在清单里 → 移除（恢复）。落盘 `<项目根>/.agents/capability-overrides.json`，
+     * 读取兼容旧位置 `.dsh` / `.claude`。
      */
     toggle(domain: CapabilityDomain, key: string): Promise<OpResult>;
 }

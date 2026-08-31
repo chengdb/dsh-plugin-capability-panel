@@ -2,8 +2,9 @@
  * 按 session 隔离的 MCP 自动挂载器。
  *
  * 在宿主根上下文上监听 `agent/created`，为每个新 agent 解析合并后的 MCP
- * 配置（全局 `<dshHome>/mcp.json` + 项目 `<projectRoot>/.mcp.json`，
- * 同名键项目覆盖全局），然后把每个启用的条目以
+ * 配置（全局 `<agentsHome>/mcp.json`，兼容旧位置 dsh home / `~/.claude`；
+ * + 项目 `<projectRoot>/.mcp.json`，同名键项目覆盖全局），然后把每个启用的
+ * 条目以
  * `agent.ctx.plugin(@deepseek-ai/dsh-mcp-client, config)` 的形式
  * **挂在 agent 自己的 Cordis 上下文上**，因此：
  *
@@ -24,16 +25,18 @@
 
 import * as McpClient from "@deepseek-ai/dsh-mcp-client";
 
+import { locateConfigFile } from "../shared/config-location.js";
 import { errMessage } from "../shared/errors.js";
 import { findProjectRoot } from "../shared/project-root.js";
 import { readMcpFile, toClientConfig } from "./config-file.js";
-import { globalMcpFile, projectMcpFile } from "./paths.js";
+import { GLOBAL_MCP_FILE_NAME, globalMcpDirs, projectMcpFile } from "./paths.js";
 import type { OverridesManager } from "../overrides/manager.js";
 import type { McpServerEntry, McpStatusView } from "./types.js";
 
 /** 挂载器的构造依赖。 */
 export interface McpLoaderDeps {
   dshHome?: string;
+  agentsHome?: string;
   /** 为 false 时不挂载任何 server（状态保持为空）。缺省 true。 */
   enabled?: boolean;
   /** 项目级"全局能力禁用"管理器：解析项目配置时跳过被禁用的全局 server。 */
@@ -86,7 +89,8 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
    * 单个文件读失败只记 warn，不中断另一个文件。
    */
   async function resolveServers(cwd: string | undefined): Promise<Array<{ key: string; entry: McpServerEntry }>> {
-    const globalFile = globalMcpFile(deps.dshHome);
+    // 全局配置读取生效位置（.agents 首选，兼容旧位置 dsh home / ~/.claude）。
+    const globalFile = locateConfigFile(globalMcpDirs(deps), GLOBAL_MCP_FILE_NAME).readFile;
     // 项目级禁用的全局 server 键集合（无 cwd 或读取失败时为空集合）。
     const disabledMcp = new Set((await deps.overrides?.sets(cwd))?.mcp ?? []);
     // 两个配置文件并行解析；单个文件读失败只记 warn，不中断另一个。

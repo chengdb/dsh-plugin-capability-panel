@@ -2,8 +2,9 @@
  * 传输无关的 skills 域服务（挂载为 `ctx.capabilityPanel.skills`）。
  *
  * 读取走两条路：
- *   - **可写磁盘视图**（项目 + 全局根目录，直接读盘以拿到 path/format/readOnly
- *     等管理列表需要的信息）；
+ *   - **受管磁盘视图**（项目 + 全局根目录，直接读盘以拿到 path/format/readOnly
+ *     等管理列表需要的信息；`.agents` 为写入目标根，`.dsh` 为旧位置兼容根，
+ *     `.claude` 为只读兼容根）；
  *   - **合并 registry 目录**（`ctx.skills.list({ cwd })`）里的只读条目
  *     （custom / bundled / 第三方 provider）。
  *
@@ -19,9 +20,9 @@ export interface ManagerDeps {
     dshHome?: string;
     agentsHome?: string;
 }
-/** 一个具体的可写 skill 根及其来源分类。 */
+/** 一个受管 skill 根及其来源分类（claude 系为只读兼容根）。 */
 export interface ManagedRoot {
-    source: "user-dsh" | "user-agents" | "project-dsh" | "project-agents";
+    source: "user-dsh" | "user-agents" | "project-dsh" | "project-agents" | "user-claude" | "project-claude";
     path: string;
 }
 /** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
@@ -39,7 +40,7 @@ export declare function createService(ctx: any, config?: {
     agentsHome?: string;
 }, overrides?: OverridesManager): {
     list: (cwd?: string) => Promise<SkillSummaryView[]>;
-    /** 创建 skill（scope / target / cwd 未给时按 project + .dsh 解析根）。 */
+    /** 创建 skill（scope / target / cwd 未给时按 project + .agents 解析根）。 */
     create(input: {
         root?: string;
         scope?: WritableScope;
