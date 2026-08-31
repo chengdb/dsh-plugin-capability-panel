@@ -56,8 +56,8 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
 
   /**
    * 拉取 list + status 并聚合成单一结果（挂载时、工作区变化时自动执行，
-   * 写操作后显式 reload()）。挂载状态按 server.key 聚合，多个 session 同名
-   * server 取"最差"状态（conflict > failed > mounted），数字越大越需要关注。
+   * 写操作后显式 reload()）。挂载状态按 server.key 聚合：任一 session 已
+   * 挂载即视为"已挂载"，全部未挂载时才取最差状态（见 mcp-common.ts）。
    */
   const { data, loading, error, reload } = useAsyncList(
     async () => {

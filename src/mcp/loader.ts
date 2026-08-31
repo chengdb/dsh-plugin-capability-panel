@@ -14,9 +14,10 @@
  *
  * 两个继承自桥接层的限制，在这里显式暴露而非隐藏：
  *
- *   - 桥接层按 **app**（以 `ctx.root` 为键）预留 `serverName`，两个存活
- *     session 挂同名 server 会冲突：第二个挂载在状态视图里报 `conflict`
- *     而不是抛错；
+ *   - 桥接层按 **app**（以 `ctx.root` 为键）预留 `serverName`：同一 server
+ *     全应用只允许一个 session 挂载。第二个 session 挂同名 server 会在状态
+ *     视图里报 `conflict`（带友好文案）而不是抛错——面板聚合时以"任一
+ *     session 已挂载"为准，重复冲突不影响展示；
  *   - 面板的写操作调用 {@link McpLoader.reload}，dispose 掉受影响 session
  *     的旧挂载并重新挂载。
  *
@@ -142,9 +143,13 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
         record.mounts.push({ key, serverName, state: "mounted" });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // 桥接层对同名 serverName 冲突的报错包含 "already in use"。
+        // 桥接层对同名 serverName 冲突的报错包含 "already in use"。这是
+        // 预期行为而非配置错误：同一 serverName 全应用仅挂载一份，其余
+        // session 报同名冲突。面板聚合时以"任一 session 已挂载"为准，
+        // 这里只把错误文案换成人话，避免误导用户去改 serverName。
         const conflict = /already in use/.test(message);
-        record.mounts.push({ key, serverName, state: conflict ? "conflict" : "failed", error: message });
+        const note = "同一 serverName 全应用仅挂载一份：已由本应用的其他会话挂载，本会话不重复挂载";
+        record.mounts.push({ key, serverName, state: conflict ? "conflict" : "failed", error: conflict ? note : message });
         logger.warn?.(`capability-panel: MCP server "${key}" not mounted for session ${record.agent.id}: ${message}`);
       }
     }

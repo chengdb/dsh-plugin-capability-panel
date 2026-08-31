@@ -14,9 +14,10 @@
  *
  * 两个继承自桥接层的限制，在这里显式暴露而非隐藏：
  *
- *   - 桥接层按 **app**（以 `ctx.root` 为键）预留 `serverName`，两个存活
- *     session 挂同名 server 会冲突：第二个挂载在状态视图里报 `conflict`
- *     而不是抛错；
+ *   - 桥接层按 **app**（以 `ctx.root` 为键）预留 `serverName`：同一 server
+ *     全应用只允许一个 session 挂载。第二个 session 挂同名 server 会在状态
+ *     视图里报 `conflict`（带友好文案）而不是抛错——面板聚合时以"任一
+ *     session 已挂载"为准，重复冲突不影响展示；
  *   - 面板的写操作调用 {@link McpLoader.reload}，dispose 掉受影响 session
  *     的旧挂载并重新挂载。
  *
