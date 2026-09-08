@@ -1,10 +1,10 @@
 /**
  * 项目级"全局能力禁用"管理服务（挂载为 `ctx.capabilityPanel.overrides`）。
  *
- * 三个域（skills / quickMessages / mcp）的列表读取与 MCP 自动挂载共用它的
- * `sets()` 快照得到"本项目禁用了哪些全局条目"；面板通过 `get()` 读全量、
- * `toggle()` 切换某一条的禁用状态（写 `.agents/capability-overrides.json`，
- * 读取兼容旧位置 `.dsh` / `.claude`，首次写入时并入并删除旧文件）。
+ * 快捷消息与 MCP 两个域的列表读取与 MCP 自动挂载共用它的 `sets()` 快照
+ * 得到"本项目禁用了哪些全局条目"；面板通过 `get()` 读全量、`toggle()`
+ * 切换某一条的禁用状态（写 `.agents/capability-overrides.json`，读取兼容
+ * 旧位置 `.dsh` / `.claude`，首次写入时并入并删除旧文件）。
  *
  * 无工作区（cwd 为 undefined）时不适用任何项目级禁用：`sets()` 返回全空
  * 快照，`toggle()` 直接报错。
@@ -15,7 +15,7 @@
 import { findProjectRoot } from "../shared/project-root.js";
 import { withFileLock } from "../shared/file-lock.js";
 import { locateConfigFile, removeFiles, type ConfigFileLocation } from "../shared/config-location.js";
-import { DOMAIN_KEYS, normalizeList, readOverrides, writeOverrides } from "./config-file.js";
+import { DOMAIN_KEYS, emptyOverrides, normalizeList, readOverrides, writeOverrides } from "./config-file.js";
 import { OVERRIDES_FILE_NAME, projectOverridesDirs } from "./paths.js";
 import type { CapabilityDomain, OverridesSet, OverridesView } from "./types.js";
 
@@ -51,11 +51,11 @@ export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
    */
   async function sets(cwd?: string): Promise<OverridesSet> {
     const loc = locationFor(cwd);
-    if (loc === undefined) return normalizeOverrides(undefined);
+    if (loc === undefined) return emptyOverrides();
     try {
       return await readOverrides(loc.readFile);
     } catch {
-      return normalizeOverrides(undefined);
+      return emptyOverrides();
     }
   }
 
@@ -85,7 +85,6 @@ export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
       return await withFileLock(loc.writeFile, async () => {
         const current = await readOverrides(loc.readFile);
         const next: OverridesSet = {
-          skills: [...current.skills],
           quickMessages: [...current.quickMessages],
           mcp: [...current.mcp],
         };
@@ -101,11 +100,6 @@ export function createOverridesManager(_deps: OverridesManagerDeps = {}) {
   }
 
   return { sets, get, toggle };
-}
-
-/** 把 undefined / OverridesSet 归一成全空快照（get 的无工作区兜底）。 */
-function normalizeOverrides(values: OverridesSet | undefined): OverridesSet {
-  return values ?? { skills: [], quickMessages: [], mcp: [] };
 }
 
 /** 管理服务的完整类型（构造函数的返回值）。 */

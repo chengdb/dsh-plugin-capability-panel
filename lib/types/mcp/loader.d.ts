@@ -24,6 +24,7 @@
  * @module @chengdb/capability-panel/mcp/loader
  */
 import type { OverridesManager } from "../overrides/manager.js";
+import type { ImportsManager } from "../imports/manager.js";
 import type { McpStatusView } from "./types.js";
 /** 挂载器的构造依赖。 */
 export interface McpLoaderDeps {
@@ -33,6 +34,8 @@ export interface McpLoaderDeps {
     enabled?: boolean;
     /** 项目级"全局能力禁用"管理器：解析项目配置时跳过被禁用的全局 server。 */
     overrides?: OverridesManager;
+    /** 项目级「全局能力引用」管理器：引用与项目原生条目同级参与合并。 */
+    imports?: ImportsManager;
 }
 /** 挂载器对外接口：读状态 + 触发重挂。 */
 export interface McpLoader {

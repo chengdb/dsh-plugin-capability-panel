@@ -8,6 +8,7 @@
  * @module @chengdb/capability-panel/mcp/manager
  */
 import type { OverridesManager } from "../overrides/manager.js";
+import type { ImportsManager } from "../imports/manager.js";
 import type { McpListResult, McpScope, McpServerEntry, McpStatusView } from "./types.js";
 import type { McpLoader } from "./loader.js";
 /** 管理服务的构造依赖。 */
@@ -34,13 +35,20 @@ export type McpOpResult = {
     errors: string[];
 };
 /** 创建管理服务；loader 由 index.ts 注入（自动挂载与状态共用同一实例）。 */
-export declare function createMcpManager(deps: McpManagerDeps, loader: McpLoader, overrides?: OverridesManager): {
+export declare function createMcpManager(deps: McpManagerDeps, loader: McpLoader, overrides?: OverridesManager, imports?: ImportsManager): {
     list: (cwd?: string) => Promise<McpListResult>;
     upsert: (input: McpUpsertInput) => Promise<McpOpResult>;
     remove: (input: McpWriteInput) => Promise<McpOpResult>;
     setEnabled: (input: McpWriteInput & {
         enabled: boolean;
     }) => Promise<McpOpResult>;
+    importToProject: (input: {
+        cwd?: string;
+        key: string;
+        overwrite?: boolean;
+    }) => Promise<McpOpResult & {
+        existed?: boolean;
+    }>;
     status: (cwd?: string) => McpStatusView[];
 };
 /** 管理服务的完整类型（构造函数的返回值）。 */

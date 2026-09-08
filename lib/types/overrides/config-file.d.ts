@@ -12,7 +12,7 @@
  * @module @chengdb/capability-panel/overrides/config-file
  */
 import type { CapabilityDomain, OverridesSet } from "./types.js";
-/** 三个能力域在声明文件里的键名（与 CapabilityDomain 一一对应）。 */
+/** 能力域在声明文件里的键名（与 CapabilityDomain 一一对应）。 */
 export declare const DOMAIN_KEYS: readonly CapabilityDomain[];
 /** 构造一份空的规范化声明（每个域都是空数组）。 */
 export declare function emptyOverrides(): OverridesSet;

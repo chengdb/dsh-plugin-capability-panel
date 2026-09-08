@@ -26,9 +26,9 @@ const NS = "capabilityPanel";
 
 /**
  * 简体中文词典。
- * 注意：当前面板组件直接使用硬编码文案（见 panel.tsx / mcp-panel.tsx 与
- * scope-tabs.ts），这组 dictionary 注册后暂无组件读取，属于后续接入本地化的
- * 预留脚手架，两边内容暂时一致。
+ * 注意：当前面板组件直接使用硬编码文案（见 panel.tsx / mcp-panel.tsx /
+ * quick-messages-panel.tsx），这组 dictionary 注册后暂无组件读取，属于
+ * 后续接入本地化的预留脚手架，两边内容暂时一致。
  */
 const zh = {
   "panel.title": "能力面板",

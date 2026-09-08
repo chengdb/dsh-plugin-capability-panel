@@ -32,6 +32,7 @@ import { findProjectRoot } from "../shared/project-root.js";
 import { readMcpFile, toClientConfig } from "./config-file.js";
 import { GLOBAL_MCP_FILE_NAME, globalMcpDirs, projectMcpFile } from "./paths.js";
 import type { OverridesManager } from "../overrides/manager.js";
+import type { ImportsManager } from "../imports/manager.js";
 import type { McpServerEntry, McpStatusView } from "./types.js";
 
 /** 挂载器的构造依赖。 */
@@ -42,6 +43,8 @@ export interface McpLoaderDeps {
   enabled?: boolean;
   /** 项目级"全局能力禁用"管理器：解析项目配置时跳过被禁用的全局 server。 */
   overrides?: OverridesManager;
+  /** 项目级「全局能力引用」管理器：引用与项目原生条目同级参与合并。 */
+  imports?: ImportsManager;
 }
 
 /** 一条 server 在一个 session 内的挂载记录。 */
@@ -87,6 +90,10 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
    * 先全局后项目（同名键项目覆盖），最后过滤掉 disabled 条目。
    * 传 cwd 时先应用该项目级"全局能力禁用"：被禁用的**全局** server 直接跳过
    * （项目自身的同名条目不受影响，仍能覆盖挂载）。
+   * 项目级引用（`.agents/capability-imports.json`）在全局之后、项目原生之前
+   * 参与合并：引用内容实时取自全局条目，`disabled` 标记即本项目不挂载
+   * （全局配置不动）；同名项目原生条目恒优先。引用是显式的项目级声明，
+   * 因此即使全局条目在 overrides 里被本项目禁用，引用仍然生效。
    * 单个文件读失败只记 warn，不中断另一个文件。
    */
   async function resolveServers(cwd: string | undefined): Promise<Array<{ key: string; entry: McpServerEntry }>> {
@@ -107,10 +114,23 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
           })
         : Promise.resolve({} as Record<string, McpServerEntry>),
     ]);
+    // 项目级引用表（无 cwd 或读失败时为空表）。
+    const refs = cwd !== undefined && deps.imports !== undefined ? await deps.imports.entries(cwd, "mcp") : {};
     const merged = new Map<string, McpServerEntry>();
     for (const [key, entry] of Object.entries(globalServers)) {
       if (disabledMcp.has(key)) continue;
       merged.set(key, entry);
+    }
+    // 引用：遮蔽全局原版（引用即项目级生效条目）；悬空引用（全局已删）忽略。
+    // 启用态的引用**清除**全局条目自身的 disabled 默认（项目级选用，与项目
+    // 原生条目的合并口径一致）；禁用态的引用显式置 disabled（本项目不挂载）。
+    for (const [key, ref] of Object.entries(refs)) {
+      const globalEntry = Object.hasOwn(globalServers, key) ? globalServers[key] : undefined;
+      if (globalEntry === undefined) continue;
+      const resolved = { ...globalEntry };
+      if (ref.disabled === true) resolved.disabled = true;
+      else delete resolved.disabled;
+      merged.set(key, resolved);
     }
     for (const [key, entry] of Object.entries(projectServers)) merged.set(key, entry);
     return [...merged.entries()]

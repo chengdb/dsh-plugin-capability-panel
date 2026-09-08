@@ -184,7 +184,7 @@ export function ComposerQuickOverlay({
     api.quickMessages
       .list()
       .then((list) => {
-        if (!cancelled) setMessages(list.messages.filter((m) => m.enabled && m.disabledInProject !== true));
+        if (!cancelled) setMessages(list.messages.filter((m) => m.enabled && m.disabledInProject !== true && m.shadowed !== true));
       })
       .catch((err) => {
         if (!cancelled) setError(String(err));

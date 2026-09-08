@@ -32,6 +32,7 @@ import { createMcpManager } from "./mcp/manager.js";
 import { createQuickMessagesManager } from "./quick-messages/manager.js";
 import { createOverridesManager } from "./overrides/manager.js";
 import type { OverrideToggleInput } from "./overrides/manager.js";
+import { createImportsManager } from "./imports/manager.js";
 import { findProjectRoot } from "./shared/project-root.js";
 import { mountRpcChannel } from "./remote.js";
 
@@ -81,11 +82,17 @@ export function apply(ctx: any, config: Config = {}) {
   // 组合根处包一层：loader 拿原身（只读），对外暴露的 service.overrides 是
   // 带 reload 侧效应的包装。
   const overridesRaw = createOverridesManager({ dshHome: config.dshHome });
+  // 项目级「全局能力引用」存储：MCP 与快捷消息两个域的管理器、MCP loader
+  // 共用同一实例（「导入到本项目」= 登记引用，启停是引用上的项目级标记）。
+  // skills 域不走引用——skill 的启停由宿主原生读 frontmatter，引用存储
+  // 对宿主注入链不可见（见 CHANGELOG Unreleased）。
+  const imports = createImportsManager();
   const loader = createMcpLoader(ctx, {
     dshHome: config.dshHome,
     agentsHome: config.agentsHome,
     enabled: config.mountMcp !== false,
     overrides: overridesRaw,
+    imports,
   });
   const overrides = {
     ...overridesRaw,
@@ -98,9 +105,9 @@ export function apply(ctx: any, config: Config = {}) {
     },
   };
   const service: CapabilityPanelService = {
-    skills: createService(ctx, config, overrides),
-    mcp: createMcpManager({ dshHome: config.dshHome, agentsHome: config.agentsHome }, loader, overrides),
-    quickMessages: createQuickMessagesManager({ dshHome: config.dshHome, agentsHome: config.agentsHome }, overrides),
+    skills: createService(ctx, config),
+    mcp: createMcpManager({ dshHome: config.dshHome, agentsHome: config.agentsHome }, loader, overrides, imports),
+    quickMessages: createQuickMessagesManager({ dshHome: config.dshHome, agentsHome: config.agentsHome }, overrides, imports),
     overrides,
   };
   ctx.provide("capabilityPanel", () => service);

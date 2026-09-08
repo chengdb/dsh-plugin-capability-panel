@@ -18,6 +18,7 @@ import { errMessage } from "../shared/errors.js";
 import { readQuickMessagesFile, validateQuickMessage, writeQuickMessagesFile } from "./config-file.js";
 import { globalQuickMessagesDirs, projectQuickMessagesDirs, QUICK_MESSAGES_FILE_NAME } from "./paths.js";
 import type { OverridesManager } from "../overrides/manager.js";
+import type { ImportsManager } from "../imports/manager.js";
 import type { QuickMessageEntry, QuickMessagesListResult, QuickMessageView, QuickOpResult, QuickScope } from "./types.js";
 
 /** 管理服务的构造依赖。 */
@@ -41,7 +42,7 @@ export interface QuickUpsertInput extends QuickWriteInput {
 }
 
 /** 创建管理服务。 */
-export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager) {
+export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager, imports?: ImportsManager) {
   /** 全局/项目作用域的配置文件定位（项目作用域缺少 cwd 时抛错）。 */
   function locationFor(scope: QuickScope, cwd?: string): ConfigFileLocation {
     if (scope === "global") {
@@ -52,11 +53,13 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
   }
 
   /**
-   * 合并列表：全局 + 项目，按名称排序。同名条目保留两份
-   * （面板在 input 快捷弹层里按作用域分组展示，弹层插入时取"一条"即可，
-   * 面板里可分别编辑/删除各作用域的同名条目）。
+   * 合并列表：全局 + 项目原生 + 项目级引用，按名称排序。同名条目两个
+   * 作用域各保留一份；全局条目被本项目同名条目（原生或引用）遮蔽时标
+   * `shadowed`（输入框快捷弹层据此过滤全局原版）。
    * 传入 cwd 时应用该项目级"全局能力禁用"：被禁用的全局消息标上
    * disabledInProject（输入框快捷弹层在客户端再过滤掉它们）。
+   * 引用（`.agents/capability-imports.json`）不是物理副本：视图内容实时
+   * 取自同名全局条目，仅启停来自引用上的项目级 `disabled` 标记。
    * 单个文件解析失败收集到 errors，不中断整体返回。
    */
   async function list(cwd?: string): Promise<QuickMessagesListResult> {
@@ -78,7 +81,6 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
           })
         : Promise.resolve({} as Record<string, QuickMessageEntry>),
     ]);
-    const views: QuickMessageView[] = [];
     /** 把磁盘条目投影成面板视图。 */
     const view = (name: string, entry: QuickMessageEntry, scope: QuickScope, filePath: string): QuickMessageView => ({
       name,
@@ -86,17 +88,40 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
       enabled: entry.disabled !== true,
       text: entry.text,
       filePath,
+      // 导入标记只会出现在旧版「导入 = 物理复制」写入的项目副本上，原样透传。
+      ...(entry.importedFromGlobal === true ? { importedFromGlobal: true } : {}),
     });
+    // 项目级引用表（无 cwd 时为空表）：同名引用也遮蔽全局原版。
+    const refs = cwd !== undefined && imports !== undefined ? await imports.entries(cwd, "quickMessages") : {};
+    const globalRows: QuickMessageView[] = [];
     for (const [name, entry] of Object.entries(globalMessages)) {
       const row = view(name, entry, "global", globalLocation.readFile);
       if (disabledQuick.has(name)) row.disabledInProject = true;
-      views.push(row);
+      if (projectMessages[name] !== undefined || Object.hasOwn(refs, name)) row.shadowed = true;
+      globalRows.push(row);
     }
+    const projectRows: QuickMessageView[] = [];
     if (projectLocation !== undefined) {
       for (const [name, entry] of Object.entries(projectMessages)) {
-        views.push(view(name, entry, "project", projectLocation.readFile));
+        projectRows.push(view(name, entry, "project", projectLocation.readFile));
       }
     }
+    // 解析项目级引用：同名项目原生条目优先（引用视图不重复出现）；全局
+    // 条目已不存在的是悬空引用，跳过（imports 记录留待用户「移出」清理）。
+    for (const [name, ref] of Object.entries(refs)) {
+      if (projectMessages[name] !== undefined) continue;
+      const globalEntry = Object.hasOwn(globalMessages, name) ? globalMessages[name] : undefined;
+      if (globalEntry === undefined) continue;
+      projectRows.push({
+        ...view(name, globalEntry, "project", globalLocation.readFile),
+        // 启停是引用上的项目级状态，且引用是显式的项目级选用：**启用态的
+        // 引用覆盖全局条目自身的 disabled 默认**（与 MCP 域同一口径）。
+        enabled: ref.disabled !== true,
+        importedFromGlobal: true,
+        reference: true,
+      });
+    }
+    const views = [...projectRows, ...globalRows];
     views.sort((a, b) => a.name.localeCompare(b.name));
     return { messages: views, errors };
   }
@@ -105,11 +130,12 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
    * 一次写操作的公共骨架：在写入目标上加文件锁，读生效位置 → 修改 →
    * 写回 `.agents` 首选位置 → 删除旧文件（内容已并入新位置）。
    * 读→改→写整段按文件串行化，避免并发写者互相覆盖（见 shared/file-lock.ts）。
+   * 泛型 T 让 importToProject 这类操作能在失败信封上附带额外字段（existed）。
    */
-  async function withLockedFile(
+  async function withLockedFile<T extends QuickOpResult>(
     input: QuickWriteInput,
-    mutate: (messages: Record<string, QuickMessageEntry>, readFile: string) => Promise<QuickOpResult>,
-  ): Promise<QuickOpResult> {
+    mutate: (messages: Record<string, QuickMessageEntry>, readFile: string) => Promise<T>,
+  ): Promise<T> {
     const loc = locationFor(input.scope, input.cwd);
     try {
       return await withFileLock(loc.writeFile, async () => {
@@ -121,7 +147,8 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
         return result;
       });
     } catch (error) {
-      return { ok: false, errors: [errMessage(error)] };
+      // 失败信封不含 T 的附加字段（existed 缺省即"无冲突"语义），收窄是安全的。
+      return { ok: false, errors: [errMessage(error)] } as T;
     }
   }
 
@@ -138,14 +165,34 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
         text: input.text,
         // 已存在条目保留原启停态（纯正文编辑不动 disabled）。
         ...(messages[name]?.disabled === true ? { disabled: true } : {}),
+        // 导入标记同样保留（编辑正文不抹掉"来自全局导入"的身份）。
+        ...(messages[name]?.importedFromGlobal === true ? { importedFromGlobal: true } : {}),
       };
       return { ok: true };
     });
   }
 
-  /** 删除一条快捷消息（不存在时返回错误信息）。 */
+  /**
+   * 项目作用域的名称是否由"引用"承载（无同名原生条目、但引用表里存在）。
+   * 启停/删除据此路由到引用存储而不是项目配置文件。原生条目恒优先：
+   * 同名原生存在时引用记录被遮蔽（list 里也不出现），写路径一律落文件。
+   */
+  async function isReference(cwd: string, name: string): Promise<boolean> {
+    if (imports === undefined) return false;
+    const loc = locationFor("project", cwd);
+    const messages = await readQuickMessagesFile(loc.readFile).catch(() => ({}) as Record<string, QuickMessageEntry>);
+    if (Object.hasOwn(messages, name)) return false;
+    const refs = await imports.entries(cwd, "quickMessages");
+    return Object.hasOwn(refs, name);
+  }
+
+  /** 删除一条快捷消息（不存在时返回错误信息）。
+   *  项目作用域下：原生条目删文件；无原生条目但有同名引用时改为移除引用（「移出」）。 */
   async function remove(input: QuickWriteInput): Promise<QuickOpResult> {
     const name = input.name.trim();
+    if (input.scope === "project" && imports !== undefined && input.cwd !== undefined && (await isReference(input.cwd, name))) {
+      return imports.remove({ cwd: input.cwd, domain: "quickMessages", name });
+    }
     return withLockedFile(input, async (messages, readFile) => {
       // 用 Object.hasOwn 判存在：普通属性查找会把 `__proto__` / `toString`
       // 等原型链上的对象误判为"已存在"。
@@ -157,9 +204,13 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
     });
   }
 
-  /** 切换启用/禁用（保留条目，只动 disabled 键）。 */
+  /** 切换启用/禁用（保留条目，只动 disabled 键）。
+   *  项目作用域下：原生条目写文件；引用条目只切换引用上的项目级标记（全局配置不动）。 */
   async function setEnabled(input: QuickWriteInput & { enabled: boolean }): Promise<QuickOpResult> {
     const name = input.name.trim();
+    if (input.scope === "project" && imports !== undefined && input.cwd !== undefined && (await isReference(input.cwd, name))) {
+      return imports.setEnabled({ cwd: input.cwd, domain: "quickMessages", name, enabled: input.enabled });
+    }
     return withLockedFile(input, async (messages, readFile) => {
       const entry = Object.hasOwn(messages, name) ? messages[name] : undefined;
       if (entry === undefined) {
@@ -174,7 +225,38 @@ export function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overr
     });
   }
 
-  return { list, upsert, remove, setEnabled };
+  /**
+   * 把全局快捷消息导入到当前项目：**登记一条引用**（写入
+   * `<项目根>/.agents/capability-imports.json`），不是物理复制——内容始终
+   * 跟随全局条目，全局更新实时生效；项目级启停记录在引用上（见
+   * imports/manager.ts）。
+   * 项目内已有同名**原生**条目时报硬错误（原生优先，引用无意义）；已有同名
+   * 引用且未要求 overwrite 时返回 existed（overwrite 下幂等成功）。
+   */
+  async function importToProject(input: { cwd?: string; name: string; overwrite?: boolean }): Promise<QuickOpResult & { existed?: boolean }> {
+    if (input.cwd === undefined) return { ok: false, errors: ["importToProject requires a workspace path"] };
+    if (imports === undefined) return { ok: false, errors: ["imports store unavailable"] };
+    let globalMessages: Record<string, QuickMessageEntry>;
+    try {
+      globalMessages = await readQuickMessagesFile(locationFor("global").readFile);
+    } catch (error) {
+      return { ok: false, errors: [errMessage(error)] };
+    }
+    // 用 Object.hasOwn 判存在：原型链上的键（__proto__ 等）不算条目。
+    if (!Object.hasOwn(globalMessages, input.name)) {
+      return { ok: false, errors: [`no global quick message named "${input.name}"`] };
+    }
+    // 项目内已有同名原生条目时引用无意义（原生优先），报硬错误而非覆盖用户配置。
+    const projectMessages = await readQuickMessagesFile(locationFor("project", input.cwd).readFile).catch(
+      () => ({}) as Record<string, QuickMessageEntry>,
+    );
+    if (Object.hasOwn(projectMessages, input.name)) {
+      return { ok: false, errors: [`项目内已有同名原生消息 "${input.name}"，无需也无法导入引用`] };
+    }
+    return imports.import({ cwd: input.cwd, domain: "quickMessages", name: input.name, overwrite: input.overwrite });
+  }
+
+  return { list, upsert, remove, setEnabled, importToProject };
 }
 
 /** 管理服务的完整类型（构造函数的返回值）。 */

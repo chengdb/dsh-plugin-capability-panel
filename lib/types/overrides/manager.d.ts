@@ -1,10 +1,10 @@
 /**
  * 项目级"全局能力禁用"管理服务（挂载为 `ctx.capabilityPanel.overrides`）。
  *
- * 三个域（skills / quickMessages / mcp）的列表读取与 MCP 自动挂载共用它的
- * `sets()` 快照得到"本项目禁用了哪些全局条目"；面板通过 `get()` 读全量、
- * `toggle()` 切换某一条的禁用状态（写 `.agents/capability-overrides.json`，
- * 读取兼容旧位置 `.dsh` / `.claude`，首次写入时并入并删除旧文件）。
+ * 快捷消息与 MCP 两个域的列表读取与 MCP 自动挂载共用它的 `sets()` 快照
+ * 得到"本项目禁用了哪些全局条目"；面板通过 `get()` 读全量、`toggle()`
+ * 切换某一条的禁用状态（写 `.agents/capability-overrides.json`，读取兼容
+ * 旧位置 `.dsh` / `.claude`，首次写入时并入并删除旧文件）。
  *
  * 无工作区（cwd 为 undefined）时不适用任何项目级禁用：`sets()` 返回全空
  * 快照，`toggle()` 直接报错。

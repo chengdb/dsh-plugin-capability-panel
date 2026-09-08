@@ -17,12 +17,12 @@ import { readJsonDocument } from "../shared/json-config.js";
 
 import type { CapabilityDomain, CapabilityOverrides, OverridesSet } from "./types.js";
 
-/** 三个能力域在声明文件里的键名（与 CapabilityDomain 一一对应）。 */
-export const DOMAIN_KEYS: readonly CapabilityDomain[] = ["skills", "quickMessages", "mcp"] as const;
+/** 能力域在声明文件里的键名（与 CapabilityDomain 一一对应）。 */
+export const DOMAIN_KEYS: readonly CapabilityDomain[] = ["quickMessages", "mcp"] as const;
 
 /** 构造一份空的规范化声明（每个域都是空数组）。 */
 export function emptyOverrides(): OverridesSet {
-  return { skills: [], quickMessages: [], mcp: [] };
+  return { quickMessages: [], mcp: [] };
 }
 
 /**

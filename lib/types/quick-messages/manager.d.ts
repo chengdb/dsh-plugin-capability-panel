@@ -12,6 +12,7 @@
  * @module @chengdb/capability-panel/quick-messages/manager
  */
 import type { OverridesManager } from "../overrides/manager.js";
+import type { ImportsManager } from "../imports/manager.js";
 import type { QuickMessagesListResult, QuickOpResult, QuickScope } from "./types.js";
 /** 管理服务的构造依赖。 */
 export interface QuickMessagesManagerDeps {
@@ -31,13 +32,20 @@ export interface QuickUpsertInput extends QuickWriteInput {
     text: string;
 }
 /** 创建管理服务。 */
-export declare function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager): {
+export declare function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager, imports?: ImportsManager): {
     list: (cwd?: string) => Promise<QuickMessagesListResult>;
     upsert: (input: QuickUpsertInput) => Promise<QuickOpResult>;
     remove: (input: QuickWriteInput) => Promise<QuickOpResult>;
     setEnabled: (input: QuickWriteInput & {
         enabled: boolean;
     }) => Promise<QuickOpResult>;
+    importToProject: (input: {
+        cwd?: string;
+        name: string;
+        overwrite?: boolean;
+    }) => Promise<QuickOpResult & {
+        existed?: boolean;
+    }>;
 };
 /** 管理服务的完整类型（构造函数的返回值）。 */
 export type QuickMessagesManager = ReturnType<typeof createQuickMessagesManager>;

@@ -15,7 +15,9 @@
  * 超出 Claude Code 形状的扩展字段：
  *   - `"disabled": true` —— 保留条目但跳过挂载；
  *   - `"timeoutMs"` —— 映射到桥接层的单次工具调用超时；
- *   - `"cwd"` —— 覆盖子进程工作目录（仅 stdio）。
+ *   - `"cwd"` —— 覆盖子进程工作目录（仅 stdio）；
+ *   - `"importedFromGlobal": true` —— 「从全局导入」标记（只出现在项目
+ *     副本上，见 manager.ts 的 importToProject）。
  *
  * @module @chengdb/capability-panel/mcp/types
  */
@@ -45,6 +47,12 @@ export interface McpServerEntry {
     timeoutMs?: number;
     /** 为 true 时保留条目但不挂载。 */
     disabled?: boolean;
+    /**
+     * 「从全局导入」标记：importToProject 写入项目副本。面板据此把项目区
+     * 详情卡的归属徽标显示为「全局」、移除按钮命名为「移出」（与 skills
+     * 的导入标记同一语义）。只出现在项目条目上。
+     */
+    importedFromGlobal?: boolean;
 }
 /** 面板视角下的一条 server 配置（跨作用域合并后的视图）。 */
 export interface McpServerView {
@@ -65,6 +73,20 @@ export interface McpServerView {
     entry: McpServerEntry;
     /** 声明这条条目的文件绝对路径。 */
     filePath: string;
+    /**
+     * 为 true 表示这条视图是**项目级引用**（`.agents/capability-imports.json`
+     * 里登记的引用）：内容实时取自同名全局条目（不是物理副本），启停是
+     * 引用上的项目级 `disabled` 标记。引用条目与项目原生条目同级参与
+     * 挂载合并（遮蔽全局原版）。
+     */
+    reference?: boolean;
+    /**
+     * 为 true 表示这条**项目**条目与全局条目同源：引用视图（reference）
+     * 恒带此标记；旧版「导入 = 物理复制」时期导入的副本（条目里带
+     * `importedFromGlobal` 标记）也带此标记。面板据此把归属徽标显示为
+     * 「全局」、移除按钮命名为「移出」。
+     */
+    importedFromGlobal?: boolean;
     /**
      * 为 true 表示这个**全局** server 被当前项目（list 的 cwd）在项目级声明为
      * 禁用：本项目的 session 不会挂载它（loader 跳过），面板保留展示（带
