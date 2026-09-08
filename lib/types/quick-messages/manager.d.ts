@@ -5,13 +5,19 @@
  * 快捷消息是纯数据（不挂载、不注入 session），因此写操作不需要热重载；
  * 客户端在每次写操作后 bump 数据修订号重拉列表即可。
  *
+ * 配置文件写入目标为 `.agents`（项目 `<项目根>/.agents/quick-messages.json`、
+ * 全局 `<agentsHome>/quick-messages.json`），读取兼容旧位置，首次写入时并入
+ * 并删除旧文件（见 shared/config-location.ts）。
+ *
  * @module @chengdb/capability-panel/quick-messages/manager
  */
 import type { OverridesManager } from "../overrides/manager.js";
+import type { ImportsManager } from "../imports/manager.js";
 import type { QuickMessagesListResult, QuickOpResult, QuickScope } from "./types.js";
 /** 管理服务的构造依赖。 */
 export interface QuickMessagesManagerDeps {
     dshHome?: string;
+    agentsHome?: string;
 }
 /** 一次写操作的最小入参（scope + 目标文件定位）。 */
 export interface QuickWriteInput {
@@ -26,13 +32,20 @@ export interface QuickUpsertInput extends QuickWriteInput {
     text: string;
 }
 /** 创建管理服务。 */
-export declare function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager): {
+export declare function createQuickMessagesManager(deps: QuickMessagesManagerDeps, overrides?: OverridesManager, imports?: ImportsManager): {
     list: (cwd?: string) => Promise<QuickMessagesListResult>;
     upsert: (input: QuickUpsertInput) => Promise<QuickOpResult>;
     remove: (input: QuickWriteInput) => Promise<QuickOpResult>;
     setEnabled: (input: QuickWriteInput & {
         enabled: boolean;
     }) => Promise<QuickOpResult>;
+    importToProject: (input: {
+        cwd?: string;
+        name: string;
+        overwrite?: boolean;
+    }) => Promise<QuickOpResult & {
+        existed?: boolean;
+    }>;
 };
 /** 管理服务的完整类型（构造函数的返回值）。 */
 export type QuickMessagesManager = ReturnType<typeof createQuickMessagesManager>;

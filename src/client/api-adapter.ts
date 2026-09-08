@@ -59,7 +59,10 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
       if (record.ok === true && record.value !== null && typeof record.value === "object") {
         const inner = record.value as Record<string, unknown>;
         if (inner.ok === false && Array.isArray(inner.errors)) {
-          return { ok: false, errors: inner.errors as string[] };
+          // 展平业务失败信封时**透传其余字段**（如 importToProject 的
+          // existed 标记——丢失它会让客户端的"确认覆盖"两击交互永远走不到）。
+          const { ok: _ok, errors, ...rest } = inner;
+          return { ok: false, errors: errors as string[], ...rest } as RawResult;
         }
         return raw as RawResult;
       }
@@ -128,6 +131,12 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
         return unwrap(await rpc("skills.setEnabled", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
       },
 
+      /** 细粒度调节调用方式（模型/用户两个方向分别开关）：与服务端同名词条一致。 */
+      async setInvocation(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("skills.setInvocation", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
+      },
+
       /** 上传安装：解开信封后投影成 InstallResult。 */
       async installUpload(input) {
         const cwd = deps.currentWorkspaceCwd();
@@ -144,6 +153,28 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
       async installFromUrl(input) {
         const cwd = deps.currentWorkspaceCwd();
         return toInstallResult(unwrap(await rpc("skills.install", { ...input, cwd })));
+      },
+
+      /** 导入全局 skill 到当前项目：与服务端同名词条一致，直接返回信封（existed/path 字段透传）。 */
+      async importToProject(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("skills.importToProject", { ...input, cwd })) as
+          | { ok: true; existed?: boolean; path?: string }
+          | { ok: false; errors: string[] };
+      },
+
+      /** 在本项目内禁用某个全局 skill（shadow stub）：与服务端同名词条一致（existed 字段透传）。 */
+      async disableInProject(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("skills.disableInProject", { ...input, cwd })) as
+          | { ok: true; existed?: boolean }
+          | { ok: false; errors: string[] };
+      },
+
+      /** 恢复全局 skill 在本项目可用（删除 shadow stub，幂等）。 */
+      async enableInProject(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("skills.enableInProject", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
       },
 
       /** 导出为文件清单：解开信封后按宿主返回的形状投影。 */
@@ -193,6 +224,14 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
         return rpc("mcp.setEnabled", { ...input, cwd });
       },
 
+      /** 导入全局 server 到当前项目：与服务端同名词条一致，直接返回信封（existed 字段透传）。 */
+      async importToProject(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("mcp.importToProject", { ...input, cwd })) as
+          | { ok: true; existed?: boolean }
+          | { ok: false; errors: string[] };
+      },
+
       async status(): Promise<ClientMcpStatus[]> {
         const cwd = deps.currentWorkspaceCwd();
         const result = await rpc("mcp.status", { cwd });
@@ -223,6 +262,14 @@ export function createPanelApi(deps: AdapterDeps): CapabilityPanelApi {
       async setEnabled(input) {
         const cwd = deps.currentWorkspaceCwd();
         return unwrap(await rpc("quick.setEnabled", { ...input, cwd })) as { ok: true } | { ok: false; errors: string[] };
+      },
+
+      /** 导入全局快捷消息到当前项目：与服务端同名词条一致，直接返回信封（existed 字段透传）。 */
+      async importToProject(input) {
+        const cwd = deps.currentWorkspaceCwd();
+        return unwrap(await rpc("quick.importToProject", { ...input, cwd })) as
+          | { ok: true; existed?: boolean }
+          | { ok: false; errors: string[] };
       },
     },
 
@@ -283,7 +330,8 @@ function toSummary(value: Record<string, unknown>): ClientSkillSummary {
     readOnly: value.readOnly === true,
     ...(typeof value.path === "string" ? { path: value.path } : {}),
     ...(typeof value.root === "string" ? { root: value.root } : {}),
-    ...(value.disabledInProject === true ? { disabledInProject: true } : {}),
+    ...(value.shadowStub === true ? { shadowStub: true } : {}),
+    ...(value.projectShadow === "stub" || value.projectShadow === "skill" ? { projectShadow: value.projectShadow } : {}),
   };
 }
 

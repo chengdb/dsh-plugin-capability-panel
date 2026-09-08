@@ -1,11 +1,14 @@
 /**
  * Capability Panel 的 MCP 域视图。
  *
- * 列出合并后的 server 配置（全局 `~/.dsh/mcp.json` + 项目 `.mcp.json`，
- * 同名键项目遮蔽全局），叠加每个 session 的实时挂载状态，并按
- * All / Project / Global 作用域 Tab（见 scope-tabs.ts）+ 搜索过滤；
- * 支持 新增 / 编辑 / 删除 / 启用禁用。写入直接落配置文件，宿主在每次
- * 写操作后重挂受影响 session 的连接。
+ * 顶部在「项目 / 全局」两区之间切换（两区分离 + 导入制，与 Skills 域同一
+ * 模型，见 panel.tsx 的 SkillsView）：每区列表只含该作用域配置文件里的真实
+ * 条目（项目 `<项目根>/.mcp.json` / 全局 `~/.agents/mcp.json`，兼容旧位置
+ * dsh home / `~/.claude`；同名键项目遮蔽全局），叠加每个 session 的实时
+ * 挂载状态，按搜索词过滤。**全局区没有启停开关**——写操作只有
+ * 「导入到本项目」（物理复制快照，此后在本项目内独立控制）/编辑/删除；
+ * 启停只出现在项目区。写入直接落配置文件，宿主在每次写操作后重挂受影响
+ * session 的连接。
  *
  * @module @chengdb/capability-panel/client/mcp-panel
  */
@@ -16,9 +19,8 @@ import { summarizeEntry, transportOf, validateEntry } from "../mcp/entry-util.js
 import type { McpScope, McpServerEntry } from "../mcp/types.js";
 import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
-import { hasWorkspaceLabel, ProjectOverrideButton, ScopeTabs, useAsyncList } from "./panel-common.js";
+import { hasWorkspaceLabel, useAsyncList, ZoneTabs, type PanelZone } from "./panel-common.js";
 import { aggregateMounts, MOUNT_LABEL, type MountInfo } from "./mcp-common.js";
-import type { ScopeTab } from "./scope-tabs.js";
 
 /** 复合行 id：同一个 key 可能同时存在于 project 与 global 两个作用域。 */
 function rowId(server: Pick<ClientMcpServer, "scope" | "key">): string {
@@ -30,21 +32,21 @@ function rowId(server: Pick<ClientMcpServer, "scope" | "key">): string {
  * 挂载状态（未挂载 / 失败 / 冲突）作为补充说明收进同一句。
  */
 function rowDotTitle(server: ClientMcpServer, mount: MountInfo | undefined): string {
-  if (!server.enabled) return "已禁用（本项目的 session 不挂载）";
-  if (server.disabledInProject === true) return "本项目禁用（全局仍启用，本项目的 session 不挂载）";
+  if (!server.enabled) return "已禁用（不挂载）";
   if (mount === undefined) return "已启用 · 未挂载到当前会话";
   return mount.error !== undefined ? `已启用 · ${MOUNT_LABEL[mount.state]}：${mount.error}` : `已启用 · ${MOUNT_LABEL[mount.state]}`;
 }
 
 /**
  * MCP 视图主组件：状态管理 + 拉取/重拉 + 列表 + 详情/表单。
- * 全局 server 在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可
- * 恢复；被禁用的全局 server 在本项目的 session 里不会被挂载）。
+ * 两区制：项目区条目可启停/编辑/删除；全局区条目只有「导入到本项目」/
+ * 编辑/删除（导入 = 物理复制快照到 `<项目根>/.mcp.json`，项目内已有同名
+ * 时两击确认覆盖；同名项目条目遮蔽全局条目）。
  */
 export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace?: string }) {
   const mcpApi = api.mcp;
   const [opError, setOpError] = useState<string | undefined>(undefined);
-  const [tab, setTab] = useState<ScopeTab>("all");
+  const [zone, setZone] = useState<PanelZone>("project");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | undefined>(undefined);
   // 编辑态：undefined = 空闲；非空 = 正在弹窗里编辑这条 server（McpEditDialog）。
@@ -53,11 +55,13 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
   const [addOpen, setAddOpen] = useState(false);
   // 二次确认删除：记录"待确认的行 id"，再点一次才真正删除。
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>(undefined);
+  // 二次确认导入覆盖：项目内已有同名时记录"待确认的行 id"，再点一次带 overwrite。
+  const [confirmImport, setConfirmImport] = useState<string | undefined>(undefined);
 
   /**
    * 拉取 list + status 并聚合成单一结果（挂载时、工作区变化时自动执行，
-   * 写操作后显式 reload()）。挂载状态按 server.key 聚合，多个 session 同名
-   * server 取"最差"状态（conflict > failed > mounted），数字越大越需要关注。
+   * 写操作后显式 reload()）。挂载状态按 server.key 聚合：任一 session 已
+   * 挂载即视为"已挂载"，全部未挂载时才取最差状态（见 mcp-common.ts）。
    */
   const { data, loading, error, reload } = useAsyncList(
     async () => {
@@ -70,17 +74,18 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
   const listErrors = data?.listErrors ?? [];
   const mounts = data?.mounts ?? {};
 
-  // 过滤：作用域 Tab + 搜索词（命中 key 或摘要）。
+  // 过滤：当前区 + 搜索词（命中 key 或摘要）。
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return servers.filter((server) => {
-      const inScope = tab === "all" || server.scope === tab;
+      const inZone = server.scope === zone;
       const inQuery = q.length === 0 || server.key.toLowerCase().includes(q) || server.summary.toLowerCase().includes(q);
-      return inScope && inQuery;
+      return inZone && inQuery;
     });
-  }, [servers, tab, query]);
+  }, [servers, zone, query]);
 
   const selectedServer = servers.find((s) => rowId(s) === selected);
+  const noWorkspace = !hasWorkspaceLabel(workspace);
 
   /** 执行一次写操作：失败写 opError；成功清错误并重拉列表。返回是否成功。 */
   const runOp = async (op: Promise<OpResult>): Promise<boolean> => {
@@ -94,14 +99,32 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
     return true;
   };
 
-  /** 启用/禁用切换（直接写入配置文件，落盘后宿主自动重挂）。 */
+  /** 启用/禁用切换（直接写入配置文件，落盘后宿主自动重挂；只出现在项目区）。 */
   const onToggle = (server: ClientMcpServer) => {
     void runOp(mcpApi.setEnabled({ scope: server.scope, key: server.key, enabled: !server.enabled }));
   };
 
-  /** 切换全局 server 在当前项目的禁用状态（写项目覆写文件，不动全局配置，落盘后宿主热重挂本项目的 session）。 */
-  const onToggleProjectDisabled = (server: ClientMcpServer) => {
-    void runOp(api.overrides.toggle("mcp", server.key));
+  /**
+   * 导入这条**全局** server 到当前项目：物理复制到 `<项目根>/.mcp.json`
+   * （快照语义——全局后续更新不回流；同名项目条目遮蔽全局）。项目内已有
+   * 同名（未确认覆盖）时进入"确认覆盖"态，再次点击带 overwrite 覆盖项目
+   * 副本。成功后重拉列表（切到项目区可见、可独立控制，宿主热重挂本项目
+   * 的 session）。
+   */
+  const onImport = async (server: ClientMcpServer) => {
+    const id = rowId(server);
+    const result = await mcpApi.importToProject({ key: server.key, overwrite: confirmImport === id });
+    if (!result.ok) {
+      if (result.existed === true) {
+        setConfirmImport(id);
+        return;
+      }
+      setOpError(result.errors.join("; "));
+      return;
+    }
+    setOpError(undefined);
+    setConfirmImport(undefined);
+    reload();
   };
 
   /** 删除：第一次点击进入确认态；同一行再次点击才真正删除并清空选中。 */
@@ -120,7 +143,16 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
   return (
     <div className="skp-domain">
       <div className="skp-subheader">
-        <ScopeTabs value={tab} onChange={setTab} />
+        {/* 区 Tab：项目 / 全局。切换时清空选中与确认态，避免上个区的残留。 */}
+        <ZoneTabs
+          value={zone}
+          onChange={(z) => {
+            setZone(z);
+            setSelected(undefined);
+            setConfirmDelete(undefined);
+            setConfirmImport(undefined);
+          }}
+        />
         <input
           className="skp-search"
           type="search"
@@ -131,13 +163,15 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
         <button
           type="button"
           className="skp-btn skp-btn-primary"
+          disabled={zone === "project" && noWorkspace}
+          title={zone === "project" && noWorkspace ? "项目区需要可写的工作区才能添加" : undefined}
           onClick={() => {
             setEditServer(undefined);
             setSelected(undefined);
             setAddOpen(true);
           }}
         >
-          + 添加服务器
+          + 添加{zone === "project" ? "到项目" : "到全局"}
         </button>
       </div>
 
@@ -161,39 +195,41 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
                       setSelected(id);
                       setEditServer(undefined);
                       setConfirmDelete(undefined);
+                      setConfirmImport(undefined);
                     }}
                   >
                     <span className="skp-row-name">
-                      {/* 状态圆点（与 Skills / 快捷消息同一控件族、同一语义）：
-                          已禁用（含全局已禁用）恒为灰；仅全局启用时区分
-                          本项目禁用（橙）/ 启用（绿）；挂载异常（失败/冲突/
-                          未挂载）用 meta 标签 + tooltip 表达，不占圆点颜色。 */}
-                      <span
-                        className={`skp-dot ${!server.enabled ? "" : server.disabledInProject === true ? "skp-dot-project-disabled" : "skp-dot-enabled"}`}
-                        title={rowDotTitle(server, mount)}
-                      />
+                      {/* 状态圆点（仅项目区渲染——全局条目恒定可用、无启停状态，
+                          与 skills 全局区同一口径）：绿=启用、灰=禁用；挂载异常
+                          （失败/冲突/未挂载）用 meta 标签 + tooltip 表达。 */}
+                      {zone === "project" && (
+                        <span
+                          className={`skp-dot ${server.enabled ? "skp-dot-enabled" : ""}`}
+                          title={rowDotTitle(server, mount)}
+                        />
+                      )}
                       {server.key}
                     </span>
                     <span className="skp-row-meta">
-                      <span className={server.scope === "project" ? "skp-tag skp-tag-project" : "skp-tag skp-tag-global"}>
-                        {server.scope === "project" ? "项目" : "全局"}
-                      </span>
                       <span className="skp-tag skp-tag-flat">{server.transport}</span>
                       {!server.enabled && <span className="skp-tag skp-tag-readonly">已禁用</span>}
                       {/* 启用但挂载异常的实时信号：失败红 / 冲突橙（tooltip 里有详情）。 */}
                       {server.enabled && mount?.state === "failed" && <span className="skp-tag skp-tag-error">挂载失败</span>}
                       {server.enabled && mount?.state === "conflict" && <span className="skp-tag skp-tag-warn">冲突</span>}
                       {server.shadowed && <span className="skp-tag skp-tag-directory">被遮蔽</span>}
-                      {/* 本项目禁用的橙色标记只对"全局仍启用"的条目有意义
-                          （全局已禁用的整行已是灰色，无需再用橙色标记）。 */}
-                      {server.enabled && server.disabledInProject === true && <span className="skp-tag skp-tag-project-disabled">本项目禁用</span>}
                     </span>
                     <span className="skp-row-desc">{server.summary}</span>
                   </button>
                 </li>
               );
             })}
-            {visible.length === 0 && <li className="skp-empty">没有匹配的 MCP 服务器。</li>}
+            {visible.length === 0 && (
+              <li className="skp-empty">
+                {zone === "project"
+                  ? "本项目还没有 MCP 服务器。可到「全局」区导入，或点「+ 添加到项目」。"
+                  : "还没有全局 MCP 服务器。点「+ 添加到全局」添加。"}
+              </li>
+            )}
           </ul>
 
           <div className="skp-detail">
@@ -201,16 +237,13 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
               <McpDetail
                 server={selectedServer}
                 mount={mounts[selectedServer.key]}
-                confirming={confirmDelete === rowId(selectedServer)}
+                hasWorkspace={!noWorkspace}
+                confirmingDelete={confirmDelete === rowId(selectedServer)}
+                confirmingImport={confirmImport === rowId(selectedServer)}
                 onEdit={() => setEditServer(selectedServer)}
                 onToggle={() => onToggle(selectedServer)}
                 onDelete={() => onDelete(selectedServer)}
-                projectDisabled={selectedServer.disabledInProject === true}
-                onToggleProject={
-                  selectedServer.scope === "global" && hasWorkspaceLabel(workspace)
-                    ? () => onToggleProjectDisabled(selectedServer)
-                    : undefined
-                }
+                onImport={() => void onImport(selectedServer)}
               />
             ) : (
               <div className="skp-detail-empty">选择一个服务器查看详情，或新增一个。</div>
@@ -219,12 +252,13 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
         </div>
       )}
 
-      {/* 新增弹窗：表单 / JSON 两种模式（与技能安装弹窗同构）。 */}
+      {/* 新增弹窗：表单 / JSON 两种模式（与技能安装弹窗同构；默认作用域跟随当前区）。 */}
       {addOpen && (
         <McpAddDialog
           api={mcpApi}
           servers={servers}
           workspace={workspace}
+          defaultScope={zone}
           onClose={() => setAddOpen(false)}
           onMutated={() => reload()}
         />
@@ -247,75 +281,136 @@ export function McpView({ api, workspace }: { api: CapabilityPanelApi; workspace
 // 详情卡片
 // ---------------------------------------------------------------------------
 
-/** 详情卡片：只读展示条目字段 + 挂载状态 + 编辑/启停/删除操作。状态按钮的
- *  文字与颜色随状态变化：全局 server 有工作区时是两个按钮——
- *  「全局已启用/全局已禁用」管全局配置，「项目已启用/项目已禁用」
- *  管项目级覆写（不动全局配置，写后宿主热重挂本项目的 session）。 */
+/** 详情卡片：归属徽标 + 只读展示条目字段 + 挂载状态 + 写操作。与 Skills
+ *  详情同一模型：**项目区**条目 = 启用/禁用状态按钮、编辑、删除（两击
+ *  确认）；**全局区**条目 = 「导入到本项目」（物理复制快照，项目内已有
+ *  同名时两击确认覆盖）、编辑、删除——全局条目不在面板里启停，需要
+ *  项目级控制时先导入再在项目副本上操作。 */
 function McpDetail({
   server,
   mount,
-  confirming,
+  hasWorkspace,
+  confirmingDelete,
+  confirmingImport,
   onEdit,
   onToggle,
   onDelete,
-  projectDisabled,
-  onToggleProject,
+  onImport,
 }: {
   server: ClientMcpServer;
   mount?: MountInfo;
-  confirming: boolean;
+  /** 面板是否附着在可写工作区上（全局条目的「导入到本项目」需要 cwd）。 */
+  hasWorkspace: boolean;
+  confirmingDelete: boolean;
+  confirmingImport: boolean;
   onEdit(): void;
   onToggle(): void;
   onDelete(): void;
-  /** 该全局 server 是否被当前项目在项目级声明禁用。 */
-  projectDisabled: boolean;
-  /** 切换"在本项目禁用"（无工作区或项目条目时为 undefined，不渲染该按钮）。 */
-  onToggleProject: (() => void) | undefined;
+  onImport(): void;
 }) {
   const isGlobal = server.scope === "global";
+  /** 项目区里来自全局导入的副本（条目带导入标记）：徽标按"出身"标「全局」。 */
+  const imported = !isGlobal && server.importedFromGlobal === true;
+  /** 项目级引用（内容跟随全局，启停是项目级标记；不提供「编辑」）。 */
+  const isReference = server.reference === true;
+  /** 移除按钮文案：全局导入的副本 = 「移出」（全局原版仍在全局区）；其余 = 「删除」。 */
+  const removeVerb = imported ? "移出" : "删除";
   return (
     <div className="skp-detail-card">
-      {/* 头部：标题；操作按钮单独占一行，置于标题之下。 */}
+      {/* 头部：标题 + 归属徽标。徽标按"出身"显示：与全局同源的项目区条目
+          （引用 / 旧版导入副本）也标「全局」（绿）；被项目级同名条目遮蔽的
+          全局条目在 tooltip 里说明。 */}
       <div className="skp-detail-head">
         <h3>{server.key}</h3>
-      </div>
-      <div className="skp-detail-actions">
-        {/* 启用/禁用状态按钮：只管条目自身配置；全局行带「全局」前缀，
-            与右侧的「本项目」按钮区分开。 */}
-        <button
-          type="button"
-          className={`skp-btn ${server.enabled ? "skp-state-on" : "skp-state-off"}`}
+        <span
+          className={isGlobal || imported ? "skp-tag skp-tag-global" : "skp-tag skp-tag-project"}
           title={
             isGlobal
-              ? server.enabled
-                ? "点击全局禁用（所有项目的 session 都不再挂载）"
-                : "点击全局启用（恢复所有项目挂载）"
-              : server.enabled
-                ? "点击禁用（保留在配置文件中，不挂载）"
-                : "点击启用（写入配置文件并挂载）"
+              ? server.shadowed
+                ? "全局服务器（对所有项目生效）；当前被本项目内的同名条目遮蔽"
+                : "全局服务器（对所有项目生效）"
+              : isReference
+                ? "本项目内对全局服务器的引用（内容跟随全局，启停只作用于本项目）"
+                : imported
+                  ? "本项目内来自全局导入的副本（遮蔽全局同名条目，控制只作用于本项目）"
+                  : "本项目内的服务器（遮蔽全局同名条目）"
           }
-          onClick={onToggle}
         >
-          {isGlobal ? (server.enabled ? "全局已启用" : "全局已禁用") : server.enabled ? "已启用" : "已禁用"}
-        </button>
-        {/* 项目级覆写按钮：只对有工作区的全局 server 渲染；绿色=项目已启用，
-            橙色=项目已禁用（写项目覆写文件，不动全局配置）；全局已禁用时
-            恒灰并禁用（本项目状态没有意义）。恢复措辞用「挂载」（其他域用
-            「生效」）。 */}
-        {onToggleProject !== undefined && (
-          <ProjectOverrideButton
-            globalEnabled={server.enabled}
-            projectDisabled={projectDisabled}
-            actionWord="挂载"
-            onToggle={onToggleProject}
-          />
+          {isGlobal || imported ? "全局" : "项目"}
+        </span>
+      </div>
+      <div className="skp-detail-actions">
+        {/* 启用/禁用只对**项目区**条目渲染：全局条目不在面板里启停
+            （全局配置里的 disabled 标记仍可在编辑弹窗里调整）。 */}
+        {!isGlobal && (
+          <button
+            type="button"
+            className={`skp-btn ${server.enabled ? "skp-state-on" : "skp-state-off"}`}
+            title={
+              isReference
+                ? server.enabled
+                  ? "点击在本项目禁用该引用（本项目不再挂载，全局配置不变）"
+                  : "点击在本项目启用该引用（全局配置不变）"
+                : server.enabled
+                  ? "点击禁用（保留在配置文件中，不挂载）"
+                  : "点击启用（写入配置文件并挂载）"
+            }
+            onClick={onToggle}
+          >
+            {server.enabled ? "已启用" : "已禁用"}
+          </button>
         )}
-        <button type="button" className="skp-btn" onClick={onEdit}>
-          编辑
-        </button>
-        {/* 二次确认：confirming 时按钮变红并显示确认文案。 */}
-        <button type="button" className={confirming ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"} onClick={onDelete}>
-          {confirming ? "确认删除？" : "删除"}
+        {/* 全局区禁用恢复：全局条目自身 disabled（旧数据）时给一个直接的
+            恢复入口（对所有项目生效）。启用态的全局条目不提供禁用——
+            项目级停用走「导入到本项目」后的引用启停。 */}
+        {isGlobal && !server.enabled && (
+          <button
+            type="button"
+            className="skp-btn skp-state-off"
+            title="此全局服务器当前为禁用状态；点击恢复启用（对所有项目生效）"
+            onClick={onToggle}
+          >
+            已禁用
+          </button>
+        )}
+        {/* 导入到本项目：只对有工作区的全局条目渲染。登记项目级引用，
+            已有同名引用时进入"确认"态（二次点击幂等重导入）。 */}
+        {isGlobal && hasWorkspace && (
+          <button
+            type="button"
+            className={confirmingImport ? "skp-btn skp-btn-danger" : "skp-btn"}
+            title={
+              confirmingImport
+                ? "项目内已有同名引用，再次点击将重新登记（保留原启停状态，全局配置不变）"
+                : "在本项目登记对全局服务器的引用（内容跟随全局，可在本项目启停）"
+            }
+            onClick={onImport}
+          >
+            {confirmingImport ? "确认重复导入同名引用？" : "导入到本项目"}
+          </button>
+        )}
+        {/* 引用条目不提供「编辑」（内容就是全局条目，请到全局区编辑）。 */}
+        {!isReference && (
+          <button type="button" className="skp-btn" onClick={onEdit}>
+            编辑
+          </button>
+        )}
+        {/* 二次确认：confirmingDelete 时按钮变红并显示确认文案。 */}
+        <button
+          type="button"
+          className={confirmingDelete ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"}
+          title={
+            isGlobal
+              ? "删除此全局服务器；各项目内的引用不受影响（变为悬空引用）"
+              : isReference
+                ? "移出本项目（移除对全局服务器的引用，全局原版仍在全局区）"
+                : imported
+                  ? "移出本项目（移除全局导入的副本，全局原版仍在全局区）"
+                  : "删除本项目中的这个服务器"
+          }
+          onClick={onDelete}
+        >
+          {confirmingDelete ? `确认${removeVerb}？` : removeVerb}
         </button>
       </div>
       <dl className="skp-detail-fields">
@@ -339,11 +434,6 @@ function McpDetail({
             <dd className="skp-path">{server.entry.url}</dd>
           </>
         )}
-        <dt>作用域</dt>
-        <dd>
-          {server.scope === "project" ? "项目" : "全局"}
-          {server.shadowed ? "（被项目级同名条目遮蔽）" : ""}
-        </dd>
         <dt>配置文件</dt>
         <dd className="skp-path">{server.filePath}</dd>
         <dt>状态</dt>
@@ -380,6 +470,7 @@ function McpForm({
   workspace,
   embedded,
   actionsClass = "skp-detail-actions",
+  defaultScope,
   onCancel,
   onSave,
 }: {
@@ -390,12 +481,14 @@ function McpForm({
   embedded?: boolean;
   /** 按钮行容器类；弹窗内传 `skp-modal-actions`（右对齐）。 */
   actionsClass?: string;
+  /** 新增态的初始作用域（跟随面板当前区；缺省按有无工作区推导）。 */
+  defaultScope?: McpScope;
   onCancel(): void;
   onSave(scope: McpScope, key: string, entry: McpServerEntry): Promise<void>;
 }) {
   // 编辑态用现有条目回填；新增态从空对象起步。
   const entry = server?.entry ?? {};
-  const [scope, setScope] = useState<McpScope>(server?.scope ?? (workspace !== undefined ? "project" : "global"));
+  const [scope, setScope] = useState<McpScope>(server?.scope ?? defaultScope ?? (workspace !== undefined ? "project" : "global"));
   const [key, setKey] = useState(server?.key ?? "");
   const [transport, setTransport] = useState<"stdio" | "http">(server?.transport ?? "stdio");
   const [command, setCommand] = useState(entry.command ?? "");
@@ -409,10 +502,8 @@ function McpForm({
   const [saving, setSaving] = useState(false);
 
   const isNew = mode === "new";
-  // 没有工作区时不能创建项目级条目：workspace 是面板传入的展示标签
-  // （workspaceLabel() 恒为字符串，无工作区时为 "（无工作区）"），所以
-  // 不能只判 undefined，需与 skills 视图(panel.tsx)同一口径。
-  const noWorkspace = workspace === undefined || workspace === "（无工作区）";
+  // 没有工作区时不能创建项目级条目（占位标签口径收敛在 panel-common.hasWorkspaceLabel）。
+  const noWorkspace = !hasWorkspaceLabel(workspace);
 
   /** 客户端前置校验（与宿主的 validateEntry 保持同口径，快速反馈）。 */
   const submit = async () => {
@@ -429,6 +520,8 @@ function McpForm({
       return;
     }
     // 只把"有内容的可选字段"写进条目，保持配置文件最小化。
+    // 「全局导入」标记随编辑保留（改字段不抹掉"来自全局导入"的身份）。
+    const importMarker = entry.importedFromGlobal === true ? { importedFromGlobal: true as const } : {};
     const next: McpServerEntry =
       transport === "stdio"
         ? {
@@ -438,6 +531,7 @@ function McpForm({
             ...(Object.keys(envRecord).length > 0 ? { env: envRecord } : {}),
             ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
             ...(disabled ? { disabled: true } : {}),
+            ...importMarker,
           }
         : {
             type: "http",
@@ -445,6 +539,7 @@ function McpForm({
             ...(Object.keys(headerRecord).length > 0 ? { headers: headerRecord } : {}),
             ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
             ...(disabled ? { disabled: true } : {}),
+            ...importMarker,
           };
     setSaving(true);
     try {
@@ -473,7 +568,7 @@ function McpForm({
             options={[
               // 无工作区时禁用项目选项（项目作用域需要 cwd）。
               { value: "project", label: "项目（.mcp.json）", disabled: noWorkspace },
-              { value: "global", label: "全局（~/.dsh/mcp.json）" },
+              { value: "global", label: "全局（~/.agents/mcp.json）" },
             ]}
             onChange={(value) => setScope(value === "project" ? "project" : "global")}
           />
@@ -557,12 +652,15 @@ function McpAddDialog({
   api,
   servers,
   workspace,
+  defaultScope,
   onClose,
   onMutated,
 }: {
   api: McpApi;
   servers: ClientMcpServer[];
   workspace?: string;
+  /** 初始作用域（跟随面板当前区）。 */
+  defaultScope?: McpScope;
   onClose(): void;
   /** 任意写操作成功后刷新列表（不关闭弹窗）。 */
   onMutated(): void;
@@ -591,6 +689,7 @@ function McpAddDialog({
           workspace={workspace}
           embedded
           actionsClass="skp-modal-actions"
+          defaultScope={defaultScope}
           onCancel={onClose}
           onSave={async (scope, key, entry) => {
             const result = await api.upsert({ scope, key, entry });
@@ -601,7 +700,7 @@ function McpAddDialog({
         />
       </div>
       <div hidden={tab !== "json"}>
-        <McpJsonImport api={api} servers={servers} workspace={workspace} onClose={onClose} onMutated={onMutated} />
+        <McpJsonImport api={api} servers={servers} workspace={workspace} defaultScope={defaultScope} onClose={onClose} onMutated={onMutated} />
       </div>
     </Modal>
   );
@@ -725,20 +824,22 @@ function McpJsonImport({
   api,
   servers,
   workspace,
+  defaultScope,
   onClose,
   onMutated,
 }: {
   api: McpApi;
   servers: ClientMcpServer[];
   workspace?: string;
+  /** 初始目标作用域（跟随面板当前区）。 */
+  defaultScope?: McpScope;
   onClose(): void;
   onMutated(): void;
 }) {
-  // 没有工作区时不能创建项目级条目：workspace 是展示标签，无工作区时为
-  // "（无工作区）" 字符串，不能只判 undefined（见 quick-messages-panel 同款修正）。
-  const noWorkspace = workspace === undefined || workspace === "（无工作区）";
+  // 没有工作区时不能创建项目级条目（占位标签口径收敛在 panel-common.hasWorkspaceLabel）。
+  const noWorkspace = !hasWorkspaceLabel(workspace);
   const [text, setText] = useState("");
-  const [scope, setScope] = useState<McpScope>(noWorkspace ? "global" : "project");
+  const [scope, setScope] = useState<McpScope>(defaultScope ?? (noWorkspace ? "global" : "project"));
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [opErrors, setOpErrors] = useState<string[]>([]);
@@ -821,7 +922,7 @@ function McpJsonImport({
           options={[
             // 无工作区时禁用项目选项（项目作用域需要 cwd）。
             { value: "project", label: "项目（.mcp.json）", disabled: noWorkspace },
-            { value: "global", label: "全局（~/.dsh/mcp.json）" },
+            { value: "global", label: "全局（~/.agents/mcp.json）" },
           ]}
           onChange={(value) => setScope(value === "project" ? "project" : "global")}
         />

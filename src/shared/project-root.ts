@@ -13,8 +13,13 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-/** 判定一个目录属于"项目根"的标记（按优先级排列，命中其一即算）。 */
-const PROJECT_MARKERS = [".git", ".dsh", "dsh.json"] as const;
+/**
+ * 判定一个目录属于"项目根"的标记（命中其一即算：.git / .dsh / .agents /
+ * .claude / dsh.json）。`.agents` 与 `.claude` 随配置文件迁移加入——
+ * 项目级配置现在优先写入 `.agents`，而 Claude Code 生态以 `.claude`
+ * 为项目标记，两者都应与 `.dsh` 同样参与项目根判定。
+ */
+const PROJECT_MARKERS = [".git", ".dsh", ".agents", ".claude", "dsh.json"] as const;
 
 /**
  * 从 `cwd` 向上逐级查找项目根。
@@ -43,7 +48,7 @@ export function findProjectRoot(cwd: string): string {
   }
 }
 
-/** 判断一个目录下是否存在任一项目标记（.git / .dsh / dsh.json）。 */
+/** 判断一个目录下是否存在任一项目标记（.git / .dsh / .agents / .claude / dsh.json）。 */
 function hasProjectMarker(dir: string): boolean {
   return PROJECT_MARKERS.some((marker) => existsSync(join(dir, marker)));
 }

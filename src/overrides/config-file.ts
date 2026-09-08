@@ -1,5 +1,6 @@
 /**
- * 读写项目级"全局能力禁用"声明文件（`.dsh/capability-overrides.json`）。
+ * 读写项目级"全局能力禁用"声明文件（首选 `.agents/capability-overrides.json`，
+ * 兼容旧位置 `.dsh` / `.claude`，见 overrides/paths.ts）。
  *
  * 与 mcp / quick-messages 两个域的配置文件读写同构：写入原子（临时文件 +
  * rename）、父目录按需创建；读取对"文件缺失 / 文件为空"宽容（视为空声明），
@@ -16,12 +17,12 @@ import { readJsonDocument } from "../shared/json-config.js";
 
 import type { CapabilityDomain, CapabilityOverrides, OverridesSet } from "./types.js";
 
-/** 三个能力域在声明文件里的键名（与 CapabilityDomain 一一对应）。 */
-export const DOMAIN_KEYS: readonly CapabilityDomain[] = ["skills", "quickMessages", "mcp"] as const;
+/** 能力域在声明文件里的键名（与 CapabilityDomain 一一对应）。 */
+export const DOMAIN_KEYS: readonly CapabilityDomain[] = ["quickMessages", "mcp"] as const;
 
 /** 构造一份空的规范化声明（每个域都是空数组）。 */
 export function emptyOverrides(): OverridesSet {
-  return { skills: [], quickMessages: [], mcp: [] };
+  return { quickMessages: [], mcp: [] };
 }
 
 /**

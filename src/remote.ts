@@ -53,7 +53,11 @@ export interface PanelRpcService {
     update(input: unknown): Promise<unknown>;
     remove(input: unknown): Promise<unknown>;
     setEnabled(input: unknown): Promise<unknown>;
+    setInvocation(input: unknown): Promise<unknown>;
     install(input: unknown): Promise<unknown>;
+    importToProject(input: unknown): Promise<unknown>;
+    disableInProject(input: unknown): Promise<unknown>;
+    enableInProject(input: unknown): Promise<unknown>;
     export(input: unknown): Promise<unknown>;
   };
   mcp: {
@@ -61,6 +65,7 @@ export interface PanelRpcService {
     upsert(input: unknown): Promise<unknown>;
     remove(input: unknown): Promise<unknown>;
     setEnabled(input: unknown): Promise<unknown>;
+    importToProject(input: unknown): Promise<unknown>;
     status(cwd?: string): unknown;
   };
   quickMessages: {
@@ -68,6 +73,7 @@ export interface PanelRpcService {
     upsert(input: unknown): Promise<unknown>;
     remove(input: unknown): Promise<unknown>;
     setEnabled(input: unknown): Promise<unknown>;
+    importToProject(input: unknown): Promise<unknown>;
   };
   overrides: {
     get(cwd?: string): Promise<unknown>;
@@ -99,8 +105,16 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.skills.remove(p) };
       case "skills.setEnabled":
         return { ok: true, value: await service.skills.setEnabled(p) };
+      case "skills.setInvocation":
+        return { ok: true, value: await service.skills.setInvocation(p) };
       case "skills.install":
         return { ok: true, value: await service.skills.install(p) };
+      case "skills.importToProject":
+        return { ok: true, value: await service.skills.importToProject(p) };
+      case "skills.disableInProject":
+        return { ok: true, value: await service.skills.disableInProject(p) };
+      case "skills.enableInProject":
+        return { ok: true, value: await service.skills.enableInProject(p) };
       case "skills.export":
         return { ok: true, value: await service.skills.export(p) };
       case "mcp.list":
@@ -111,6 +125,8 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.mcp.remove(p) };
       case "mcp.setEnabled":
         return { ok: true, value: await service.mcp.setEnabled(p) };
+      case "mcp.importToProject":
+        return { ok: true, value: await service.mcp.importToProject(p) };
       case "mcp.status":
         return { ok: true, value: service.mcp.status(cwd) };
       case "quick.list":
@@ -121,6 +137,8 @@ export async function handleEndpoint(service: PanelRpcService, endpoint: string,
         return { ok: true, value: await service.quickMessages.remove(p) };
       case "quick.setEnabled":
         return { ok: true, value: await service.quickMessages.setEnabled(p) };
+      case "quick.importToProject":
+        return { ok: true, value: await service.quickMessages.importToProject(p) };
       case "overrides.get":
         return { ok: true, value: await service.overrides.get(cwd) };
       case "overrides.toggle":

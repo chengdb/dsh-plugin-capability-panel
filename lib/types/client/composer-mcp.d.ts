@@ -9,7 +9,7 @@
  *     锚点里的弹层，打开时以**整个能力工具组**的右上角为锚（弹层右下角贴
  *     按钮组右上角，position: fixed 视口定位；三个弹层共用同一锚点、切换时
  *     位置不跳变），容器与行样式对齐宿主 slash 菜单（MenuView）那一族设计
- *     变量，按 当前项目（.mcp.json）/ 全局（~/.dsh/mcp.json）分组列出
+ *     变量，按 当前项目（.mcp.json）/ 全局（~/.agents/mcp.json）分组列出
  *     server 名称，逐行开关控制本项目的启用/禁用（全局条目只切项目级
  *     覆写，不翻全局配置；全局已禁用的条目不列出）。
  *
@@ -20,7 +20,7 @@
  *
  * 启停语义与面板的 MCP 视图一致：项目条目直接写项目配置文件（disabled
  * 字段）；**全局条目只切换本项目**的启用/禁用——走项目级覆写
- * （.dsh/capability-overrides.json，其他项目不受影响），不翻全局配置。
+ * （.agents/capability-overrides.json，兼容旧位置 `.dsh`，其他项目不受影响），不翻全局配置。
  * 宿主在写操作后自动重挂受影响 session 的连接——不是会话内的临时开关。
  *
  * @module @chengdb/capability-panel/client/composer-mcp

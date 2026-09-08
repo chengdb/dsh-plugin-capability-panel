@@ -49,7 +49,11 @@ export interface PanelRpcService {
         update(input: unknown): Promise<unknown>;
         remove(input: unknown): Promise<unknown>;
         setEnabled(input: unknown): Promise<unknown>;
+        setInvocation(input: unknown): Promise<unknown>;
         install(input: unknown): Promise<unknown>;
+        importToProject(input: unknown): Promise<unknown>;
+        disableInProject(input: unknown): Promise<unknown>;
+        enableInProject(input: unknown): Promise<unknown>;
         export(input: unknown): Promise<unknown>;
     };
     mcp: {
@@ -57,6 +61,7 @@ export interface PanelRpcService {
         upsert(input: unknown): Promise<unknown>;
         remove(input: unknown): Promise<unknown>;
         setEnabled(input: unknown): Promise<unknown>;
+        importToProject(input: unknown): Promise<unknown>;
         status(cwd?: string): unknown;
     };
     quickMessages: {
@@ -64,6 +69,7 @@ export interface PanelRpcService {
         upsert(input: unknown): Promise<unknown>;
         remove(input: unknown): Promise<unknown>;
         setEnabled(input: unknown): Promise<unknown>;
+        importToProject(input: unknown): Promise<unknown>;
     };
     overrides: {
         get(cwd?: string): Promise<unknown>;

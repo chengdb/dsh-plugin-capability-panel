@@ -1,8 +1,9 @@
 /**
  * 解析 MCP 配置文件的位置。
  *
- *   - 项目作用域：`<项目根>/.mcp.json`（与 Claude Code 的约定兼容）
- *   - 全局作用域：`<dshHome>/mcp.json`
+ *   - 项目作用域：`<项目根>/.mcp.json`（与 Claude Code 的约定兼容，位置不变）；
+ *   - 全局作用域：写入 `<agentsHome>/mcp.json`（缺省 `~/.agents`），读取兼容
+ *     dsh home（`~/.dsh`）与 `~/.claude`。
  *
  * 项目根的探测复用 shared/project-root.ts 的 findProjectRoot，与 skills 域
  * 保持同一套"项目根"判定口径。
@@ -11,9 +12,13 @@
  */
 
 import { join } from "node:path";
-import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
 
+import { globalConfigBaseDirs } from "../shared/config-location.js";
+import { resolveAgentsHome } from "../shared/agents-home.js";
 import { findProjectRoot } from "../shared/project-root.js";
+
+/** 全局 MCP 配置文件的固定文件名。 */
+export const GLOBAL_MCP_FILE_NAME = "mcp.json" as const;
 
 /**
  * 项目作用域的 MCP 配置文件路径。
@@ -28,11 +33,19 @@ export function projectMcpFile(cwd: string, projectRootOverride?: string): strin
 }
 
 /**
- * 全局作用域的 MCP 配置文件路径（位于 dsh home 之下）。
- *
- * @param dshHomeOverride 显式覆盖 dsh home（可选）
- * @returns `<dshHome>/mcp.json` 的绝对路径
+ * 全局作用域的候选基准目录（绝对路径；第一个为写入目标
+ * `<agentsHome>`，缺省 `~/.agents`）。
  */
-export function globalMcpFile(dshHomeOverride?: string): string {
-  return join(resolveDshHome(dshHomeOverride), "mcp.json");
+export function globalMcpDirs(deps: { dshHome?: string; agentsHome?: string } = {}): string[] {
+  return globalConfigBaseDirs(deps.agentsHome, deps.dshHome);
+}
+
+/**
+ * 全局作用域的 MCP 配置文件写入目标路径（位于 agents home 之下）。
+ *
+ * @param agentsHomeOverride agents home 覆盖（缺省 `~/.agents`）
+ * @returns `<agentsHome>/mcp.json` 的绝对路径
+ */
+export function globalMcpFile(agentsHomeOverride?: string): string {
+  return join(resolveAgentsHome(agentsHomeOverride), GLOBAL_MCP_FILE_NAME);
 }

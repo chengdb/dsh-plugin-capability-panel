@@ -15,13 +15,13 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CapabilityPanelApi, ClientSkillSummary, SkillFilePayload, SkillsApi } from "./api.js";
+import type { CapabilityPanelApi, ClientSkillSummary, SkillFilePayload, SkillRef, SkillsApi } from "./api.js";
 import { McpView } from "./mcp-panel.js";
 import { QuickMessagesPanel } from "./quick-messages-panel.js";
 import { Modal } from "./modal.js";
 import { SkpSelect } from "./select.js";
-import { hasWorkspaceLabel, isProjectSource, ProjectOverrideButton, ScopeTabs, useAsyncList } from "./panel-common.js";
-import type { ScopeTab } from "./scope-tabs.js";
+import { hasWorkspaceLabel, isProjectSource, useAsyncList, ZoneTabs, type PanelZone } from "./panel-common.js";
+import { isGlobalSkillSource } from "../shared/skill-sources.js";
 import { locateSkillRoot, rerootEntries, stripCommonTopFolder } from "../shared/skill-locate.js";
 import { unzip } from "./unzip.js";
 import { base64ToBytes, buildZip, downloadBytes } from "./zip.js";
@@ -198,13 +198,17 @@ export function CapabilitiesFooterAction({ api, wide }: { api: CapabilityPanelAp
 // ---------------------------------------------------------------------------
 
 /**
- * Skills 视图：作用域 Tab（All/Project/Global）+ 搜索 + 安装入口 + 列表 + 详情。
- * 列表来自宿主受管根目录的磁盘视图；安装/导出/移除后通过 refreshKey 重拉。
- * 全局条目在当前项目被项目级声明禁用时带"本项目禁用"标记（详情卡可恢复）。
+ * Skills 视图：顶部在「项目 / 全局」两区之间切换。每区列表只含该作用域的
+ * 真实文件（项目区 = `<项目>/.agents/skills` 等，全局区 = `~/.agents/skills`
+ * 等）。**全局区没有启停/调用方向开关**（全局技能的启停会影响所有项目，
+ * 面板不提供），只有「导入到本项目」（物理副本，此后项目内独立控制）、
+ * 「在本项目禁用」（shadow stub：项目内屏蔽同名全局技能，可恢复）、导出、
+ * 删除；启停与方向控制只出现在项目区——写项目条目的 frontmatter，宿主
+ * 原生链路下一步即生效。
  */
 function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: string }) {
   const skillsApi = api.skills;
-  const [tab, setTab] = useState<ScopeTab>("all");
+  const [zone, setZone] = useState<PanelZone>("project");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | undefined>(undefined);
   const [installOpen, setInstallOpen] = useState(false);
@@ -213,22 +217,30 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
   const { data: allItems, loading, error, reload } = useAsyncList(() => skillsApi.list(), [skillsApi, workspace]);
   const items = allItems ?? [];
 
-  // 过滤：作用域（project 由 source 判定） + 搜索词（命中 name 或 description）。
+  // 过滤：当前区（项目系 source → 项目区；其余 → 全局区）+ 搜索词（命中 name 或 description）。
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return items.filter((item) => {
-      const inScope = tab === "all" || (tab === "project" ? isProjectSource(item.source) : !isProjectSource(item.source));
+      const inZone = zone === "project" ? isProjectSource(item.source) : !isProjectSource(item.source);
       const inQuery = q.length === 0 || item.name.toLowerCase().includes(q) || item.description.toLowerCase().includes(q);
-      return inScope && inQuery;
+      return inZone && inQuery;
     });
-  }, [items, tab, query]);
+  }, [items, zone, query]);
 
   const selectedItem = items.find((item) => skillRowKey(item) === selected);
+  const noWorkspace = !hasWorkspaceLabel(workspace);
 
   return (
     <div className="skp-domain">
       <div className="skp-subheader">
-        <ScopeTabs value={tab} onChange={setTab} />
+        {/* 区 Tab：项目 / 全局。切换时清空选中，避免上个区的选中项残留。 */}
+        <ZoneTabs
+          value={zone}
+          onChange={(z) => {
+            setZone(z);
+            setSelected(undefined);
+          }}
+        />
         <input
           className="skp-search"
           type="search"
@@ -236,8 +248,14 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <button type="button" className="skp-btn skp-btn-primary" onClick={() => setInstallOpen(true)}>
-          + 安装
+        <button
+          type="button"
+          className="skp-btn skp-btn-primary"
+          disabled={zone === "project" && noWorkspace}
+          title={zone === "project" && noWorkspace ? "项目区需要可写的工作区才能安装" : undefined}
+          onClick={() => setInstallOpen(true)}
+        >
+          + 安装{zone === "project" ? "到项目" : "到全局"}
         </button>
       </div>
 
@@ -246,53 +264,51 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
       {!loading && !error && (
         <div className="skp-body">
           <ul className="skp-list">
-            {visible.map((item) => (
-              <li key={skillRowKey(item)}>
-                <button
-                  className={selected === skillRowKey(item) ? "skp-row skp-row-active" : "skp-row"}
-                  onClick={() => setSelected(skillRowKey(item))}
-                >
-                  <span className="skp-row-name">
-                    {/* 状态圆点（与 MCP / 快捷消息同一控件族、同一语义）：
-                        全局已禁用恒灰；仅全局启用时区分本项目禁用（橙）/
-                        正常启用（绿）。 */}
-                    <span
-                      className={`skp-dot ${!isSkillEnabled(item) ? "" : item.disabledInProject === true ? "skp-dot-project-disabled" : "skp-dot-enabled"}`}
-                      title={
-                        !isSkillEnabled(item)
-                          ? "已禁用（用户与模型都不可调用）"
-                          : item.disabledInProject === true
-                            ? "本项目禁用（全局仍启用）"
-                            : item.readOnly
-                              ? "只读条目"
-                              : "已启用（模型与用户均可调用）"
-                      }
-                    />
-                    {item.name}
-                  </span>
-                  <span className="skp-row-meta">
-                    {/* 来源标签：project 系 vs 其余一律归为 global。 */}
-                    <span className={isProjectSource(item.source) ? "skp-tag skp-tag-project" : "skp-tag skp-tag-global"}>
-                      {isProjectSource(item.source) ? "项目" : "全局"}
+            {visible.map((item) => {
+              const state = invocationState(item);
+              return (
+                <li key={skillRowKey(item)}>
+                  <button
+                    className={selected === skillRowKey(item) ? "skp-row skp-row-active" : "skp-row"}
+                    onClick={() => setSelected(skillRowKey(item))}
+                  >
+                    <span className="skp-row-name">
+                      {/* 状态圆点（仅项目区渲染——全局技能恒定可用、无启停状态）：
+                          绿=双开、蓝=部分禁用（仅一个方向被关）、灰=全禁用。 */}
+                      {zone === "project" && (
+                        <span
+                          className={`skp-dot ${state === "full" ? "skp-dot-enabled" : state === "partial" ? "skp-dot-partial" : ""}`}
+                          title={
+                            state === "none"
+                              ? item.shadowStub === true
+                                ? "屏蔽占位：同名全局技能在本项目不可用（删除本条目即可恢复）"
+                                : "已禁用（用户与模型都不可调用）"
+                              : state === "partial"
+                                ? item.modelInvocable
+                                  ? "仅用户不可调用（模型仍会触发）"
+                                  : "仅模型不可调用（用户可 /name 调用）"
+                                : item.readOnly
+                                  ? "只读条目"
+                                  : "已启用（模型与用户均可调用）"
+                          }
+                        />
+                      )}
+                      {item.name}
                     </span>
-                    {/* 只读条目显示只读徽标，可写条目显示布局标签。 */}
-                    {item.readOnly ? (
-                      <span className="skp-tag skp-tag-readonly">只读</span>
-                    ) : (
-                      <span className={item.format === "directory" ? "skp-tag skp-tag-directory" : "skp-tag skp-tag-flat"}>
-                        {item.format === "directory" ? "目录" : "单文件"}
-                      </span>
-                    )}
-                    {/* 禁用的可写条目再标一个"已禁用"标签（与 MCP 行一致）。 */}
-                    {!item.readOnly && !isSkillEnabled(item) && <span className="skp-tag skp-tag-readonly">已禁用</span>}
-                    {/* 全局条目被当前项目在项目级声明禁用时的标记。 */}
-                    {item.disabledInProject === true && <span className="skp-tag skp-tag-project-disabled">本项目禁用</span>}
-                  </span>
-                  <span className="skp-row-desc">{item.description}</span>
-                </button>
+                    {/* 列表行不渲染任何属性标签（全局导入 / 只读 / 目录、单文件），
+                        状态由圆点表达，布局与来源信息收进右侧详情。 */}
+                    <span className="skp-row-desc">{item.description}</span>
+                  </button>
+                </li>
+              );
+            })}
+            {visible.length === 0 && (
+              <li className="skp-empty">
+                {zone === "project"
+                  ? "本项目还没有技能。可到「全局」区导入，或点「+ 安装到项目」。"
+                  : "还没有全局技能。点「+ 安装到全局」添加。"}
               </li>
-            ))}
-            {visible.length === 0 && <li className="skp-empty">没有匹配的技能。</li>}
+            )}
           </ul>
           <div className="skp-detail">
             {selectedItem ? (
@@ -300,11 +316,10 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
                 key={skillRowKey(selectedItem)}
                 summary={selectedItem}
                 api={skillsApi}
-                overrides={api.overrides}
-                hasWorkspace={hasWorkspaceLabel(workspace)}
-                // 启用/禁用：skill 仍存在，保留选中并重拉列表（详情随新摘要刷新）。
+                hasWorkspace={!noWorkspace}
+                // 启用/禁用/导入：skill 仍存在，保留选中并重拉列表（详情随新摘要刷新）。
                 onChanged={() => reload()}
-                // 移除：条目已不存在，清空选中再重拉。
+                // 删除：条目已不存在，清空选中再重拉。
                 onRemoved={() => {
                   setSelected(undefined);
                   reload();
@@ -320,7 +335,8 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
       {installOpen && (
         <InstallDialog
           api={skillsApi}
-          hasWorkspace={hasWorkspaceLabel(workspace)}
+          zone={zone}
+          hasWorkspace={!noWorkspace}
           onClose={() => setInstallOpen(false)}
           onInstalled={() => {
             setInstallOpen(false);
@@ -332,33 +348,40 @@ function SkillsView({ api, workspace }: { api: CapabilityPanelApi; workspace?: s
   );
 }
 
-/** source 是否属于"全局系"（项目级禁用只作用于这些条目）。 */
-function isGlobalSource(source: string): boolean {
-  return source === "user-dsh" || source === "user-agents";
-}
-
-/** 整体启用态 = 模型与用户两种调用都开着（与详情卡开关同一口径）。 */
-function isSkillEnabled(item: Pick<ClientSkillSummary, "modelInvocable" | "userInvocable">): boolean {
-  return item.modelInvocable && item.userInvocable;
+/** 调用状态三分：全启用 / 全禁用 / 部分禁用（仅其中一个方向被关）。 */
+function invocationState(item: Pick<ClientSkillSummary, "modelInvocable" | "userInvocable">): "full" | "none" | "partial" {
+  if (item.modelInvocable && item.userInvocable) return "full";
+  if (!item.modelInvocable && !item.userInvocable) return "none";
+  return "partial";
 }
 
 /**
  * React 行 key 与选中项标识。
  *
- * 技巧名在合并列表里**不唯一**——同一个名字可能出现在多个根
- * （例如项目副本遮蔽全局同名项）——重复 key 会破坏 React 列表调和
- * （重渲染时残留过期行）。所以 key 用 `source:name` 复合。
+ * 技巧名在合并列表里**不唯一**——同一个名字可能出现在多个根（例如项目
+ * 副本遮蔽全局同名项），重复 key 会破坏 React 列表调和（重渲染时残留
+ * 过期行）。所以 key 用 `source:name` 复合。
  */
 function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string {
   return `${item.source}:${item.name}`;
 }
 
 /**
- * 详情卡片：元信息 + 路径 + 写操作（启用/禁用状态按钮、导出下载、
- * 导出到宿主路径、移除）。只读条目（custom / bundled）只展示徽标，不提供操作。
- * 状态按钮的文字与颜色随状态变化：全局行有工作区时是两个按钮——
- * 「全局已启用/全局已禁用」管全局配置，「项目已启用/项目已禁用」
- * 管项目级覆写（写 `.dsh/capability-overrides.json`，不动全局配置）。
+ * 详情卡片：元信息 + 路径 + 写操作。只读条目（`.claude` 兼容根）只展示
+ * 徽标，不提供操作。
+ *
+ * - **项目区条目**：写操作 = 启用/禁用与调用方式细调状态按钮、导出下载、
+ *   导出到宿主路径、删除。整体按钮的文字与颜色随状态变化（全启用/全禁用/
+ *   部分禁用）；「调用方式」字段上是模型/用户两个方向的独立开关（只关其一
+ *   即可让 agent 不自动触发、保留用户 /name 手动调用）。启停与方向都写
+ *   项目副本的 frontmatter，宿主原生链路下一步即生效。
+ * - **全局区条目**：无启停与调用方向控制（启停全局技能会影响所有项目，
+ *   面板不提供入口）——写操作有「导入到本项目」（物理复制到
+ *   `<项目>/.agents/skills`，此后在本项目内独立控制，快照语义）、
+ *   「在本项目禁用 / 恢复」（shadow stub：项目内屏蔽同名全局技能，宿主
+ *   rank 原生生效）、导出下载、导出到宿主路径、删除。
+ * 标题旁有归属徽标（按作用域着色）：项目=蓝 / 全局=绿；屏蔽占位与被遮蔽
+ * 的全局条目附状态徽标（屏蔽占位 / 本项目已禁用 / 项目副本生效中）。
  *
  * 组件以 `key={source:name}` 挂载（见 SkillsView），切换选中行即整体重挂，
  * 因此确认态/错误态不需要手动随行切换重置。
@@ -366,17 +389,15 @@ function skillRowKey(item: Pick<ClientSkillSummary, "source" | "name">): string 
 function SkillDetail({
   summary,
   api,
-  overrides,
   hasWorkspace,
   onChanged,
   onRemoved,
 }: {
   summary: ClientSkillSummary;
   api: SkillsApi;
-  overrides: CapabilityPanelApi["overrides"];
-  /** 面板是否附着在可写工作区上（项目级禁用需要 cwd）。 */
+  /** 面板是否附着在可写工作区上（全局条目的「导入到本项目」需要 cwd）。 */
   hasWorkspace: boolean;
-  /** 条目内容已变化（如启用/禁用）：保留选中，重拉列表即可。 */
+  /** 条目内容已变化（如启用/禁用/导入）：保留选中，重拉列表即可。 */
   onChanged: () => void;
   /** 条目已删除：应清空选中。 */
   onRemoved: () => void;
@@ -384,6 +405,7 @@ function SkillDetail({
   const [busy, setBusy] = useState(false);
   const [opError, setOpError] = useState<string | undefined>(undefined);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmImport, setConfirmImport] = useState(false);
   const [exportPathOpen, setExportPathOpen] = useState(false);
 
   /**
@@ -396,6 +418,28 @@ function SkillDetail({
     setOpError(undefined);
     try {
       const result = await api.setEnabled({ ...skillRef(summary), enabled: next });
+      if (!result.ok) {
+        setOpError(result.errors.join("; "));
+        return;
+      }
+      onChanged();
+    } catch (error) {
+      setOpError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 细粒度切换其中一个调用方向（另一个方向保持原样）：例如关闭模型调用
+   * （agent 不再自动触发，用户仍可 /name 手动调用）。落盘成功后重拉列表，
+   * 详情随新摘要刷新（两个方向开关都更新）。
+   */
+  const doSetInvocation = async (modelInvocable: boolean, userInvocable: boolean) => {
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await api.setInvocation({ ...skillRef(summary), modelInvocable, userInvocable });
       if (!result.ok) {
         setOpError(result.errors.join("; "));
         return;
@@ -455,21 +499,65 @@ function SkillDetail({
     }
   };
 
-  /** 整体启用态 = 模型与用户两种调用都开着（任一被关即视为已禁用）。 */
-  const enabled = summary.modelInvocable && summary.userInvocable;
-  const isGlobal = isGlobalSource(summary.source);
-  const projectDisabled = summary.disabledInProject === true;
+  /** 整体启用态 = 模型与用户两种调用都开着（任一被关即视为未全启用）。 */
+  const state = invocationState(summary);
+  const isGlobal = isGlobalSkillSource(summary.source);
 
   /**
-   * 切换这个**全局** skill 在当前项目的禁用状态：写入项目级声明文件
-   * （.dsh/capability-overrides.json），不动全局配置；成功后重拉列表
-   * （标记与快捷弹层的可见性随之刷新）。
+   * 导入这个**全局** skill 到当前项目：物理复制到 `<项目>/.agents/skills`
+   * （目录型连资源，快照语义，此后在本项目内独立控制）。项目区已有同名
+   * 条目（未要求覆盖）时进入"确认"态，再次点击覆盖复制。成功后重拉列表
+   * （切到项目区可见、可启停）。
    */
-  const doToggleProjectDisabled = async () => {
+  const doImport = async (overwrite: boolean) => {
     setBusy(true);
     setOpError(undefined);
     try {
-      const result = await overrides.toggle("skills", summary.name);
+      const result = await api.importToProject({ name: summary.name, fromRoot: summary.root, overwrite });
+      if (!result.ok) {
+        if (result.existed === true) {
+          setConfirmImport(true);
+          return;
+        }
+        setOpError(result.errors.join("; "));
+        return;
+      }
+      onChanged();
+    } catch (error) {
+      setOpError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * 在本项目内禁用这个**全局** skill：生成 shadow stub（项目 `.agents/skills`
+   * 下的同名占位，frontmatter 双向禁用），宿主按 rank 让它遮蔽全局条目——
+   * catalog / skill 工具 / `/name` 三条链路都在本项目内原生拒绝该技能。
+   */
+  const doDisableInProject = async () => {
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await api.disableInProject({ name: summary.name, fromRoot: summary.root });
+      if (!result.ok) {
+        setOpError(result.errors.join("; "));
+        return;
+      }
+      onChanged();
+    } catch (error) {
+      setOpError(String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 恢复：删除本项目内的 shadow stub，该全局技能重新对本项目可见。 */
+  const doEnableInProject = async () => {
+    setBusy(true);
+    setOpError(undefined);
+    try {
+      const result = await api.enableInProject({ name: summary.name });
       if (!result.ok) {
         setOpError(result.errors.join("; "));
         return;
@@ -484,42 +572,107 @@ function SkillDetail({
 
   return (
     <div className="skp-detail-card">
-      {/* 头部：标题（只读条目附徽标）；操作按钮单独占一行，置于标题之下。 */}
+      {/* 头部：标题 + 归属徽标（按作用域着色：项目=蓝 / 全局=绿）；
+          只读条目再附只读徽标。 */}
       <div className="skp-detail-head">
         <h3>{summary.name}</h3>
+        <span
+          className={isGlobal ? "skp-tag skp-tag-global" : "skp-tag skp-tag-project"}
+          title={isGlobal ? "全局技能（对所有项目生效）" : "本项目内的技能"}
+        >
+          {isGlobal ? "全局" : "项目"}
+        </span>
         {summary.readOnly && <span className="skp-badge">只读</span>}
+        {/* 屏蔽占位（项目区）：该条目存在的唯一意义是在本项目内禁用同名全局技能。 */}
+        {summary.shadowStub === true && (
+          <span className="skp-badge" title="屏蔽占位：使同名全局技能在本项目不可用；删除本条目即可恢复">
+            屏蔽占位
+          </span>
+        )}
+        {/* 全局条目被本项目遮蔽的两种状态（见 skills/shadow.ts 与 rank 覆盖语义）。 */}
+        {isGlobal && summary.projectShadow === "stub" && (
+          <span className="skp-badge" title="本项目内已放置屏蔽占位，此技能在本项目不可用（不影响其它项目）">
+            本项目已禁用
+          </span>
+        )}
+        {isGlobal && summary.projectShadow === "skill" && (
+          <span className="skp-badge" title="项目区有同名技能，按宿主优先级在本项目生效的是项目副本">
+            项目副本生效中
+          </span>
+        )}
       </div>
       {!summary.readOnly && (
         <div className="skp-detail-actions">
-          {/* 启用/禁用状态按钮：只管条目自身配置；全局行带「全局」前缀，
-              与右侧的「本项目」按钮区分开。 */}
-          <button
-            type="button"
-            className={`skp-btn ${enabled ? "skp-state-on" : "skp-state-off"}`}
-            disabled={busy}
-            title={
-              isGlobal
-                ? enabled
-                  ? "点击全局禁用（所有项目都不可调用）"
-                  : "点击全局启用（恢复所有项目可用）"
-                : enabled
-                  ? "点击禁用（用户与模型都不可调用）"
-                  : "点击启用（恢复用户与模型调用）"
-            }
-            onClick={() => void doSetEnabled(!enabled)}
-          >
-            {isGlobal ? (enabled ? "全局已启用" : "全局已禁用") : enabled ? "已启用" : "已禁用"}
-          </button>
-          {/* 项目级覆写按钮：只对有工作区的全局行渲染；绿=项目已启用，
-              橙=项目已禁用（写项目覆写文件，不动全局配置）；全局已禁用
-              时恒灰并禁用（本项目状态没有意义）。 */}
-          {hasWorkspace && isGlobal && (
-            <ProjectOverrideButton
-              globalEnabled={enabled}
-              projectDisabled={projectDisabled}
+          {/* 启用/禁用与调用方向只对**项目区**条目开放：写项目副本的
+              frontmatter（宿主原生链路，下一步即生效），不影响全局配置。
+              全局技能的启停会影响所有项目，面板不提供全局禁用入口。
+              屏蔽占位本身就是"双向禁用"，不再提供启停。 */}
+          {!isGlobal && summary.shadowStub !== true && (
+            <button
+              type="button"
+              className={`skp-btn ${state === "full" ? "skp-state-on" : state === "partial" ? "skp-state-partial" : "skp-state-off"}`}
               disabled={busy}
-              onToggle={() => void doToggleProjectDisabled()}
-            />
+              title={state === "full" ? "点击禁用（用户与模型都不可调用）" : "点击启用（恢复用户与模型调用）"}
+              onClick={() => void doSetEnabled(state !== "full")}
+            >
+              {state === "full" ? "已启用" : state === "none" ? "已禁用" : "部分禁用"}
+            </button>
+          )}
+          {/* 全局区禁用恢复：全局条目自身处于禁用状态时给一个直接的恢复
+              入口（启用 = 清除 frontmatter 关闭键，对所有项目生效）。 */}
+          {isGlobal && state !== "full" && (
+            <button
+              type="button"
+              className="skp-btn skp-state-off"
+              disabled={busy}
+              title="此全局技能当前为禁用状态；点击恢复启用（对所有项目生效）"
+              onClick={() => void doSetEnabled(true)}
+            >
+              已禁用
+            </button>
+          )}
+          {/* 导入到本项目：只对有工作区的全局行渲染。物理复制到项目根，
+              项目区已有同名条目时进入"确认"态（二次点击覆盖复制）。 */}
+          {hasWorkspace && isGlobal && (
+            <button
+              type="button"
+              className={confirmImport ? "skp-btn skp-btn-danger" : "skp-btn"}
+              disabled={busy}
+              title={
+                confirmImport
+                  ? "项目内已有同名技能，再次点击将覆盖为全局副本"
+                  : "复制到本项目（.agents/skills），此后可在本项目内独立启停"
+              }
+              onClick={() => void doImport(confirmImport)}
+            >
+              {confirmImport ? "确认覆盖项目内的同名技能？" : "导入到本项目"}
+            </button>
+          )}
+          {/* 在本项目禁用 / 恢复：shadow stub 机制（见 skills/shadow.ts）。
+              只对未被遮蔽的全局行提供「禁用」；已被 stub 禁用的提供「恢复」；
+              已被项目副本遮蔽的（projectShadow === "skill"）不提供——项目
+              副本自身就有完整的启停控制。 */}
+          {hasWorkspace && isGlobal && summary.projectShadow === undefined && (
+            <button
+              type="button"
+              className="skp-btn"
+              disabled={busy}
+              title="在本项目内禁用此全局技能（生成屏蔽占位，模型与用户调用都被宿主原生拒绝；不影响其它项目，可随时恢复）"
+              onClick={() => void doDisableInProject()}
+            >
+              在本项目禁用
+            </button>
+          )}
+          {hasWorkspace && isGlobal && summary.projectShadow === "stub" && (
+            <button
+              type="button"
+              className="skp-btn"
+              disabled={busy}
+              title="删除本项目内的屏蔽占位，恢复此全局技能在本项目可用"
+              onClick={() => void doEnableInProject()}
+            >
+              在本项目恢复
+            </button>
           )}
           <button type="button" className="skp-btn" disabled={busy} onClick={doExportDownload}>
             导出
@@ -531,9 +684,16 @@ function SkillDetail({
             type="button"
             className={confirmRemove ? "skp-btn skp-btn-danger" : "skp-btn skp-btn-danger-ghost"}
             disabled={busy}
+            title={
+              summary.shadowStub === true
+                ? "移除此屏蔽占位，恢复同名全局技能在本项目可用"
+                : isGlobal
+                  ? "删除此全局技能（所有项目都不再可用）"
+                  : "删除本项目中的这份技能"
+            }
             onClick={doRemove}
           >
-            {confirmRemove ? "确认移除？" : "移除"}
+            {confirmRemove ? "确认删除？" : "删除"}
           </button>
         </div>
       )}
@@ -546,10 +706,53 @@ function SkillDetail({
             <dd>{summary.whenToUse}</dd>
           </>
         )}
-        <dt>调用方式</dt>
-        <dd>
-          模型：{summary.modelInvocable ? "✓" : "✗"} · 用户：{summary.userInvocable ? "✓" : "✗"}
-        </dd>
+        {/* 调用方式字段：只读条目与屏蔽占位静态展示；项目区可写条目是两个方向的独立
+        开关（写项目副本的 frontmatter：只关模型方向即可让 agent 不自动触发、
+        保留用户 /name 手动调用）；全局区条目不展示——启停与方向只有
+        「导入到本项目」复制出项目副本后才能控制。 */}
+        {(summary.readOnly || !isGlobal) && (
+          <>
+            <dt>调用方式</dt>
+            <dd>
+              {summary.readOnly || summary.shadowStub === true ? (
+                <>
+                  模型：{summary.modelInvocable ? "✓" : "✗"} · 用户：{summary.userInvocable ? "✓" : "✗"}
+                </>
+              ) : (
+                /* 模型 / 用户两个方向各自独立开关：适合「不需要 agent 自动触发、
+                   只保留用户 /name 手动调用」这类 skill。 */
+                <div className="skp-invoke-btns">
+                  <button
+                    type="button"
+                    className={`skp-btn ${summary.modelInvocable ? "skp-state-on" : "skp-state-off"}`}
+                    disabled={busy}
+                    title={
+                      summary.modelInvocable
+                        ? "点击关闭模型调用（agent 不再自动触发；用户仍可 /name 调用）"
+                        : "点击开启模型调用（agent 可自动触发）"
+                    }
+                    onClick={() => void doSetInvocation(!summary.modelInvocable, summary.userInvocable)}
+                  >
+                    模型调用 {summary.modelInvocable ? "✓" : "✗"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`skp-btn ${summary.userInvocable ? "skp-state-on" : "skp-state-off"}`}
+                    disabled={busy}
+                    title={
+                      summary.userInvocable
+                        ? "点击关闭用户调用（输入框 /name 不再注入此技能；模型仍可自动触发）"
+                        : "点击开启用户调用（输入框 /name 可注入此技能）"
+                    }
+                    onClick={() => void doSetInvocation(summary.modelInvocable, !summary.userInvocable)}
+                  >
+                    用户调用 {summary.userInvocable ? "✓" : "✗"}
+                  </button>
+                </div>
+              )}
+            </dd>
+          </>
+        )}
         <dt>来源</dt>
         <dd>{summary.source}</dd>
         {summary.path !== undefined && (
@@ -571,11 +774,14 @@ function SkillDetail({
  * 组装一行的寻址入参：优先用宿主给的受管根（精确，覆盖 user-agents 等
  * scope 表达不了的根）；root 缺失时按 source 退化到 scope/target。
  */
-function skillRef(summary: ClientSkillSummary): { name: string; root?: string; scope?: "project" | "global"; target?: ".dsh" | ".agents" } {
-  if (summary.root !== undefined) return { name: summary.name, root: summary.root };
-  if (summary.source === "project-dsh") return { name: summary.name, scope: "project", target: ".dsh" };
-  if (summary.source === "project-agents") return { name: summary.name, scope: "project", target: ".agents" };
-  return { name: summary.name, scope: "global" };
+function skillRef(summary: ClientSkillSummary): SkillRef {
+  return summary.root !== undefined
+    ? { name: summary.name, root: summary.root }
+    : summary.source === "project-dsh"
+      ? { name: summary.name, scope: "project", target: ".dsh" }
+      : summary.source === "project-agents"
+        ? { name: summary.name, scope: "project", target: ".agents" }
+        : { name: summary.name, scope: "global" };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,11 +800,25 @@ type InstallMode = keyof typeof INSTALL_MODE;
 /**
  * 安装对话框：三种来源——浏览器上传（单个 .md / 整个 skill 目录 / .zip
  * 压缩包）、宿主磁盘路径、URL 下载（GitHub 仓库 / .zip / raw .md）。
- * 目标作用域三选一（无工作区时禁用 project）。
+ * 目标作用域随所在区固定：全局区只见"全局"，项目区只见"项目（.agents /
+ * .dsh 旧位置）"，不再提供跨区目标选择。
  */
-function InstallDialog({ api, hasWorkspace, onClose, onInstalled }: { api: SkillsApi; hasWorkspace: boolean; onClose: () => void; onInstalled: () => void }) {
+function InstallDialog({
+  api,
+  zone,
+  hasWorkspace,
+  onClose,
+  onInstalled,
+}: {
+  api: SkillsApi;
+  /** 所在的区（全局 / 项目），决定可选的安装目标。 */
+  zone: PanelZone;
+  hasWorkspace: boolean;
+  onClose: () => void;
+  onInstalled: () => void;
+}) {
   const [mode, setMode] = useState<InstallMode>("upload");
-  const [scopeChoice, setScopeChoice] = useState<InstallScopeChoice>(hasWorkspace ? "project-dsh" : "global");
+  const [scopeChoice, setScopeChoice] = useState<InstallScopeChoice>(zone === "global" ? "global" : "project-agents");
   const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -786,11 +1006,14 @@ function InstallDialog({ api, hasWorkspace, onClose, onInstalled }: { api: Skill
           <SkpSelect
             value={scopeChoice}
             ariaLabel="安装目标"
-            options={[
-              { value: "project-dsh", label: "项目 — .dsh/skills", disabled: !hasWorkspace },
-              { value: "project-agents", label: "项目 — .agents/skills", disabled: !hasWorkspace },
-              { value: "global", label: "全局 — ~/.dsh/skills" },
-            ]}
+            options={
+              zone === "global"
+                ? [{ value: "global", label: "全局 — ~/.agents/skills" }]
+                : [
+                    { value: "project-agents", label: "项目 — .agents/skills（默认）", disabled: !hasWorkspace },
+                    { value: "project-dsh", label: "项目 — .dsh/skills（旧）", disabled: !hasWorkspace },
+                  ]
+            }
             onChange={(value) => setScopeChoice(value as InstallScopeChoice)}
           />
         </div>

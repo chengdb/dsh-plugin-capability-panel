@@ -65,9 +65,33 @@ export interface SetEnabledOptions {
      */
     enabled: boolean;
 }
+/** 细粒度调节调用方式的入参。 */
+export interface SetInvocationOptions {
+    root: string;
+    name: string;
+    /**
+     * 期望的调用策略：模型（agent 自动触发）与用户（输入框 `/name` 口令）
+     * 两个方向分别开关。启用的一方对应的 frontmatter 键被清除，禁用的一方
+     * 写入对应键，互不干扰；与 {@link setSkillEnabled} 共用同一套读改写逻辑。
+     */
+    modelInvocable: boolean;
+    userInvocable: boolean;
+}
 /**
- * 一键启用/禁用 skill：读取原文件，整体覆盖调用策略后写回，正文与其它
- * 元数据（whenToUse / metadata 等）原样保留。
+ * 细粒度调节 skill 的调用方式：读取原文件，把两个方向（模型 / 用户）的
+ * 期望状态整体写回，正文与其它元数据（whenToUse / metadata 等）原样保留。
+ *
+ * 按方向推导 frontmatter 键（写盘保持最小化）：
+ *   - 模型不可调用 ⇒ 写 `disable-model-invocation: true`，可调用则清除该键；
+ *   - 用户不可调用 ⇒ 写 `user-invocable: false`，可调用则清除该键。
+ */
+export declare function setSkillInvocation(options: SetInvocationOptions): Promise<{
+    ok: boolean;
+    errors?: string[];
+}>;
+/**
+ * 一键启用/禁用 skill：整体启停只是细调的两个方向取同值（全开 / 全关），
+ * 复用 {@link setSkillInvocation} 的读改写实现。
  */
 export declare function setSkillEnabled(options: SetEnabledOptions): Promise<{
     ok: boolean;
