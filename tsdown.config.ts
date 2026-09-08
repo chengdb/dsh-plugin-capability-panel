@@ -36,6 +36,10 @@ export default defineConfig({
   deps: { neverBundle: true },
   outputOptions: {
     entryFileNames: "client.js",
+    // 不用默认的 client.js.map：曾有进程（宿主服务）以不可写共享方式长期持有
+    // 旧 map 文件句柄，导致 rolldown 写入 "拒绝访问 (os error 5)" 而整体构建
+    // 失败。换个文件名规避该句柄冲突。
+    sourcemapFileNames: "client.map",
     // 双保险：banner 建立 CJS 的 module/exports 环境，包体本身再走
     // __ModuleLoader__ 注册工厂；两者配合让外壳能 require 这个 lazy-CJS。
     intro: "var module = { exports: {} }; var exports = module.exports;",
