@@ -28,7 +28,7 @@ import { createQuickMessagesManager } from "./quick-messages/manager.js";
 import { createOverridesManager } from "./overrides/manager.js";
 /** Cordis 插件名（对应 cordis.patch.yml 里的插件 id）。 */
 export declare const name = "capability-panel";
-/** 宿主插件强依赖的服务（connection 是惰性解析的，不在这里声明）。 */
+/** 宿主插件强依赖的服务（connection/webServer 是惰性解析的，不在这里声明）。 */
 export declare const inject: string[];
 /** 宿主插件配置项。 */
 export interface Config {

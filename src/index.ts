@@ -39,7 +39,7 @@ import { mountRpcChannel } from "./remote.js";
 /** Cordis 插件名（对应 cordis.patch.yml 里的插件 id）。 */
 export const name = "capability-panel";
 
-/** 宿主插件强依赖的服务（connection 是惰性解析的，不在这里声明）。 */
+/** 宿主插件强依赖的服务（connection/webServer 是惰性解析的，不在这里声明）。 */
 export const inject = ["skills"];
 
 /** 宿主插件配置项。 */

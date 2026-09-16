@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **DSH 升级到 0.1.5-rc.2 后打开「能力面板」即报 `transport failure for
+  /capability-panel/skills.list: HTTP 405`**：宿主端原先用
+  `connection.rpc.handle("/capability-panel", …)` 挂通道，该 API 在当前版本内部
+  执行 `owner.effect(() => owner.webServer.register(route))`，其中 `owner` 经
+  cordis 的 shadow/origin 绑定解析成 **connection 插件自己的 ctx**（inject 里
+  没有 `webServer`），于是恒定抛 `cannot get property "webServer" without
+  inject`——异常发生在 `rpc.handle` 内部，通道静默不挂载，浏览器端的 POST 落到
+  前端静态兜底路由上，返回 405。现改为用宿主公开 API 自行挂前缀路由：
+  `ctx.inject(["connection", "webServer"], …)` 等两端服务就位 +
+  `connection.requestRejection(req)` 过宿主/来源信任与浏览器会话认证 +
+  `webServer.register({ kind: "prefix", path, handler })` 注册路由，并自行实现
+  与 `dsh-client-connection` 客户端 `rpc.call` 一致的线上信封
+  （`client-request` / `server-response`）。路由注册生命周期挂在插件自己的
+  fiber 上，插件卸载 / 重载即摘除。
+
 ## [1.0.0] - 2026-09-08
 
 ### 新增
