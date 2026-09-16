@@ -217,8 +217,10 @@ watcher + 目录重发布原生生效（下一步即注入/剔除），没有写
   filesystem provider 口径逐字节一致），启停只写 frontmatter 调用键，
   由宿主的文件 watcher 原生生效。
 - **MCP 按 session 隔离**：挂在 agent 自己的 Cordis context 上，agent
-  dispose 即自动卸载；已知限制是 `serverName` 预留为进程级，同项目两个
-  session 并存时后到者显示黄色冲突圆点，不影响先挂载者。
+  dispose 即自动卸载；桥接插件取**宿主那份** `@deepseek-ai/dsh-mcp-client`
+  实例，`serverName` 按 agent 作用域预留，同一项目多个 session 各自挂载、
+  互不冲突。宿主没有 loader 时（headless 等）回落到插件自带副本，那种情况下
+  `serverName` 仍是全应用单份，后到者显示黄色冲突圆点、不影响先挂载者。
 - **UI 纯增量**：侧栏入口与输入框按钮都注册在宿主的列表槽（list slot）里，
   不顶替、不遮蔽任何内置 UI，也不绑定特定 session。
 
@@ -227,7 +229,7 @@ watcher + 目录重发布原生生效（下一步即注入/剔除），没有写
 安装最新 release（推荐，版本钉死）：
 
 ```powershell
-dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v1.0.1"
+dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v1.0.2"
 dsh web        # 打开 Web GUI，侧栏底部可见「能力面板」
 ```
 
