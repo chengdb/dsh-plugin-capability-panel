@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-16
+
 ### 修复
 
 - **DSH 升级到 0.1.5-rc.2 后打开「能力面板」即报 `transport failure for
@@ -162,6 +164,7 @@
   输出总量上限（对接入的压缩包上限之下再拦一层"膨胀内存"），并修复
   数据区越界被静默截断、短归档负面偏移读越界的问题（zip bomb 防护）。
 
-[Unreleased]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.0...master
+[Unreleased]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.1...master
+[1.0.1]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/chengdb/dsh-plugin-capability-panel/releases/tag/v0.8.0
