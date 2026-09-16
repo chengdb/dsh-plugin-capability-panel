@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **同一应用里只有第一个会话能看到 MCP 工具，其余会话静默 `conflict`**：
+  `mcp/loader.ts` 顶层静态 `import` 拿到的是本插件 `dependencies` 里那份
+  `@deepseek-ai/dsh-mcp-client`（0.1.0-rc.8），它按 `ctx.root` 预留
+  `serverName`——全应用只允许一个会话挂上同名 server，后开的会话拿不到任何
+  `mcp__*` 工具，面板聚合显示「任一会话已挂载」因而看不出问题；宿主自己那份
+  （0.1.5-rc.2 起）按 agent 作用域预留（`scopeOf(ctx) ?? ctx.root`），多会话
+  才能各自挂载。注意**升级依赖版本解决不了**：插件自带的
+  `@deepseek-ai/dsh-scope` 副本里 `kScope` 是每份模块实例独有的 Symbol，
+  `scopeOf()` 读不到宿主打在 agent ctx 上的 scope tag，仍会回落 `ctx.root`。
+  现改为挂载时按包名向宿主 loader 取实例
+  （`ctx.get("loader").import(...)` + `unwrapExports`，解析基准是 profile
+  目录），宿主没有 loader 时才回落到自带副本。
+
 ## [1.0.1] - 2026-09-16
 
 ### 修复

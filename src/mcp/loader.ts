@@ -5,26 +5,28 @@
  * 配置（全局 `<agentsHome>/mcp.json`，兼容旧位置 dsh home / `~/.claude`；
  * + 项目 `<projectRoot>/.mcp.json`，同名键项目覆盖全局），然后把每个启用的
  * 条目以
- * `agent.ctx.plugin(@deepseek-ai/dsh-mcp-client, config)` 的形式
- * **挂在 agent 自己的 Cordis 上下文上**，因此：
+ * `agent.ctx.plugin(dsh-mcp-client, config)` 的形式
+ * **挂在 agent 自己的 Cordis 上下文上**（插件实例优先取宿主那份，见
+ * {@link createMcpClientResolver}），因此：
  *
  *   - 工具（`mcp__<serverName>__*`）只在该 session 内可见，agent 被释放时
  *     自动消失；
  *   - A 项目的 session 永远不会看到 B 项目的 server。
  *
- * 两个继承自桥接层的限制，在这里显式暴露而非隐藏：
+ * 剩下一个继承自桥接层的限制，在这里显式暴露而非隐藏：
  *
- *   - 桥接层按 **app**（以 `ctx.root` 为键）预留 `serverName`：同一 server
- *     全应用只允许一个 session 挂载。第二个 session 挂同名 server 会在状态
- *     视图里报 `conflict`（带友好文案）而不是抛错——面板聚合时以"任一
- *     session 已挂载"为准，重复冲突不影响展示；
+ *   - 桥接层按 **注册作用域** 预留 `serverName`。挂宿主那份实例时作用域是
+ *     agent，每个 session 各自挂一份，互不冲突；只有回落到本插件自带的旧
+ *     副本（0.1.0-rc.8，按 `ctx.root` 预留，见
+ *     {@link createMcpClientResolver}）时，同一 server 全应用才只允许一个
+ *     session 挂载，其余 session 在状态视图里报 `conflict`（带友好文案）
+ *     而不是抛错——面板聚合时以"任一 session 已挂载"为准，重复冲突不影响
+ *     展示；
  *   - 面板的写操作调用 {@link McpLoader.reload}，dispose 掉受影响 session
  *     的旧挂载并重新挂载。
  *
  * @module @chengdb/capability-panel/mcp/loader
  */
-
-import * as McpClient from "@deepseek-ai/dsh-mcp-client";
 
 import { locateConfigFile } from "../shared/config-location.js";
 import { errMessage } from "../shared/errors.js";
@@ -78,12 +80,47 @@ export interface McpLoader {
   reload(projectRoot?: string): Promise<void>;
 }
 
+/**
+ * 解析要挂载的 MCP 桥接插件实例（懒加载 + 缓存一次）。
+ *
+ * **必须优先用宿主自己的那份** `@deepseek-ai/dsh-mcp-client`：本插件
+ * `dependencies` 里那份副本（0.1.0-rc.8）按 `ctx.root` 预留 `serverName`，
+ * 全应用只允许一个 session 挂上同名 server；宿主那份（0.1.5-rc.2 起）按
+ * agent 作用域预留（`scopeOf(ctx) ?? ctx.root`），多会话才能各自拿到工具。
+ * 升级依赖版本解决不了这件事：插件自带的 `@deepseek-ai/dsh-scope` 副本里
+ * `kScope` 是每份模块实例独有的 Symbol，`scopeOf()` 读不到宿主打在 agent
+ * ctx 上的 scope tag，仍旧回落 `ctx.root`。因此按包名向宿主的 loader 取
+ * 实例（加载本插件用的就是它，解析基准是 profile 目录）；宿主没有 loader
+ * 时（headless 等）才回落到自带副本。
+ */
+function createMcpClientResolver(ctx: any): () => Promise<any> {
+  let resolved: Promise<any> | undefined;
+  return () => {
+    resolved ??= (async () => {
+      const loader = ctx.get?.("loader");
+      if (typeof loader?.import === "function") {
+        try {
+          const mod = await loader.import("@deepseek-ai/dsh-mcp-client");
+          if (mod !== null && mod !== undefined) {
+            return typeof loader.unwrapExports === "function" ? loader.unwrapExports(mod) : mod;
+          }
+        } catch (error) {
+          ctx.logger?.warn?.(`capability-panel: host mcp-client unavailable (${errMessage(error)}); falling back to the bundled copy`);
+        }
+      }
+      return await import("@deepseek-ai/dsh-mcp-client");
+    })();
+    return resolved;
+  };
+}
+
 /** 创建挂载器：注册 agent 生命周期监听 + 存量 agent 补挂。 */
 export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
   const sessions = new Map<string, SessionRecord>();
   const enabled = deps.enabled !== false;
 
   const logger = ctx.logger ?? console;
+  const mcpClient = createMcpClientResolver(ctx);
 
   /**
    * 为某个工作区解析合并后的启用 server 列表：
@@ -156,7 +193,7 @@ export function createMcpLoader(ctx: any, deps: McpLoaderDeps = {}): McpLoader {
       const config = toClientConfig(key, entry, record.projectRoot ?? record.cwd);
       const serverName = config.serverName;
       try {
-        const fiber = record.agent.ctx.plugin(McpClient, config);
+        const fiber = record.agent.ctx.plugin(await mcpClient(), config);
         record.fibers.push({ dispose: () => fiber.dispose() });
         // await 激活：同步的配置/命名空间失败要归因到这一条。
         await fiber;
