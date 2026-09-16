@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-16
+
+### 修复
+
+- **同一应用里只有第一个会话能看到 MCP 工具，其余会话静默 `conflict`**：
+  `mcp/loader.ts` 顶层静态 `import` 拿到的是本插件 `dependencies` 里那份
+  `@deepseek-ai/dsh-mcp-client`（0.1.0-rc.8），它按 `ctx.root` 预留
+  `serverName`——全应用只允许一个会话挂上同名 server，后开的会话拿不到任何
+  `mcp__*` 工具，面板聚合显示「任一会话已挂载」因而看不出问题；宿主自己那份
+  （0.1.5-rc.2 起）按 agent 作用域预留（`scopeOf(ctx) ?? ctx.root`），多会话
+  才能各自挂载。注意**升级依赖版本解决不了**：插件自带的
+  `@deepseek-ai/dsh-scope` 副本里 `kScope` 是每份模块实例独有的 Symbol，
+  `scopeOf()` 读不到宿主打在 agent ctx 上的 scope tag，仍会回落 `ctx.root`。
+  现改为挂载时按包名向宿主 loader 取实例
+  （`ctx.get("loader").import(...)` + `unwrapExports`，解析基准是 profile
+  目录），宿主没有 loader 时才回落到自带副本。
+
 ## [1.0.1] - 2026-09-16
 
 ### 修复
@@ -164,7 +181,8 @@
   输出总量上限（对接入的压缩包上限之下再拦一层"膨胀内存"），并修复
   数据区越界被静默截断、短归档负面偏移读越界的问题（zip bomb 防护）。
 
-[Unreleased]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.1...master
+[Unreleased]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.2...master
+[1.0.2]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v0.8.0...v1.0.0
 [0.8.0]: https://github.com/chengdb/dsh-plugin-capability-panel/releases/tag/v0.8.0

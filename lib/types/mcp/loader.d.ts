@@ -5,19 +5,23 @@
  * 配置（全局 `<agentsHome>/mcp.json`，兼容旧位置 dsh home / `~/.claude`；
  * + 项目 `<projectRoot>/.mcp.json`，同名键项目覆盖全局），然后把每个启用的
  * 条目以
- * `agent.ctx.plugin(@deepseek-ai/dsh-mcp-client, config)` 的形式
- * **挂在 agent 自己的 Cordis 上下文上**，因此：
+ * `agent.ctx.plugin(dsh-mcp-client, config)` 的形式
+ * **挂在 agent 自己的 Cordis 上下文上**（插件实例优先取宿主那份，见
+ * {@link createMcpClientResolver}），因此：
  *
  *   - 工具（`mcp__<serverName>__*`）只在该 session 内可见，agent 被释放时
  *     自动消失；
  *   - A 项目的 session 永远不会看到 B 项目的 server。
  *
- * 两个继承自桥接层的限制，在这里显式暴露而非隐藏：
+ * 剩下一个继承自桥接层的限制，在这里显式暴露而非隐藏：
  *
- *   - 桥接层按 **app**（以 `ctx.root` 为键）预留 `serverName`：同一 server
- *     全应用只允许一个 session 挂载。第二个 session 挂同名 server 会在状态
- *     视图里报 `conflict`（带友好文案）而不是抛错——面板聚合时以"任一
- *     session 已挂载"为准，重复冲突不影响展示；
+ *   - 桥接层按 **注册作用域** 预留 `serverName`。挂宿主那份实例时作用域是
+ *     agent，每个 session 各自挂一份，互不冲突；只有回落到本插件自带的旧
+ *     副本（0.1.0-rc.8，按 `ctx.root` 预留，见
+ *     {@link createMcpClientResolver}）时，同一 server 全应用才只允许一个
+ *     session 挂载，其余 session 在状态视图里报 `conflict`（带友好文案）
+ *     而不是抛错——面板聚合时以"任一 session 已挂载"为准，重复冲突不影响
+ *     展示；
  *   - 面板的写操作调用 {@link McpLoader.reload}，dispose 掉受影响 session
  *     的旧挂载并重新挂载。
  *
