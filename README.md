@@ -229,7 +229,7 @@ watcher + 目录重发布原生生效（下一步即注入/剔除），没有写
 安装最新 release（推荐，版本钉死）：
 
 ```powershell
-dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v1.0.2"
+dsh plugin --profile web add "github:chengdb/dsh-plugin-capability-panel#v1.1.0"
 dsh web        # 打开 Web GUI，侧栏底部可见「能力面板」
 ```
 
