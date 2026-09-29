@@ -5,6 +5,38 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-29
+
+### 修复
+
+- **DSH 升级到 0.2.0-rc.1 后整个插件被跳过（`skipping profile bundle`）**：
+  `dsh-app-boot` 的兼容性判定只检查插件 `peerDependencies` 里
+  `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的 semver 范围
+  （`semver.satisfies(runtime, range, { includePrerelease: true })`），原来那批
+  `^0.1.0-rc.7` 在 0.2.0-rc.1 上全部不满足，于是整个 bundle 被
+  `prepareProfileEntries` 跳过。其中 `@deepseek-ai/dsh-client-runtime` 在
+  0.2.0-rc.1 已不再发布（npm 上最新为 0.1.1-rc.2，内容已拆到
+  `dsh-client-ui-slots` / `dsh-client-ui-renderer` / `dsh-client-store` 等包），
+  这条 peer 永远无法满足。现改为 `^0.2.0-rc.1` 并移除该条；`slots` 服务在
+  0.2.0-rc.1 由 `@deepseek-ai/dsh-client-ui-renderer` 提供，据此更新
+  `dsh.client.inject`；`@deepseek-ai/cordis` 对齐生态统一的 `~4.0.4`。
+  插件自身的运行时依赖没有变化——客户端 bundle 只外部化 `react` /
+  `react/jsx-runtime`，构建产物里不含任何 `@deepseek-ai/*` 导入。
+- **输入框的三个弹层（快捷消息 / Skills / MCP）背景透明、下层文字透出**：
+  0.2.0-rc.1 把宿主菜单底色 `--dsw-specific-menu` 改成了两级间接的磨砂底
+  （`body` → `var(--dsw-menu-surface-fill)`，light `#f8f9fa94`≈58% /
+  dark `#43454a73`≈45%，且只有 `html[data-platform=darwin]` 被覆盖成近不透明），
+  宿主一律配 `backdrop-filter: var(--dsw-menu-backdrop-filter)` 兜底
+  （16 处引用中 11 处如此）。弹层此前只抄了 `background` 没抄模糊，于是只剩
+  半透明。现改用宿主不透明的层级底色 `--dsw-alias-bg-layer-1`（与
+  `.skp-panel` / `.skp-modal` 同一 token）；三个弹层共用 `.skp-composer-pop`，
+  一并修复。
+
+### 破坏性变更
+
+- `peerDependencies` 的 dsh 范围由 `^0.1.0-rc.7` 改为 `^0.2.0-rc.1`，插件不再在
+  dsh 0.1.x 上加载。
+
 ## [1.0.2] - 2026-09-16
 
 ### 修复
@@ -181,7 +213,8 @@
   输出总量上限（对接入的压缩包上限之下再拦一层"膨胀内存"），并修复
   数据区越界被静默截断、短归档负面偏移读越界的问题（zip bomb 防护）。
 
-[Unreleased]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.2...master
+[Unreleased]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.1.0...master
+[1.1.0]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/chengdb/dsh-plugin-capability-panel/compare/v0.8.0...v1.0.0
